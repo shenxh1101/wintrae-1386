@@ -14,7 +14,7 @@ import {
   classifyFiles,
 } from '@/utils/classifier';
 import { DEFAULT_CHECK_RULES, runAllChecks } from '@/utils/checker';
-import { processInvoiceRecognition, updateInvoiceInfo, updateExcelRowInfo } from '@/utils/invoiceRecognizer';
+import { asyncProcessInvoiceRecognition, updateInvoiceInfo, updateExcelRowInfo } from '@/utils/invoiceRecognizer';
 import { runExport } from '@/utils/exporter';
 import { createMockFiles } from '@/utils/fileProcessor';
 
@@ -37,7 +37,7 @@ interface AppState {
   deselectAll: () => void;
   loadMockData: () => void;
 
-  runRecognition: () => void;
+  runRecognition: () => Promise<void>;
   updateInvoiceInfo: (fileId: string, updates: Partial<ReimbursementFile['invoiceInfo']>) => void;
   updateExcelRow: (fileId: string, rowId: string, updates: Partial<ExcelRowRecord>) => void;
 
@@ -115,16 +115,21 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ files: mockFiles, checksCompleted: false, recognitionCompleted: false });
   },
 
-  runRecognition: () => {
+  runRecognition: async () => {
     set({ isProcessing: true });
-    setTimeout(() => {
-      set((state) => ({
-        files: processInvoiceRecognition(state.files),
-        isProcessing: false,
+    try {
+      const state = get();
+      const updatedFiles = await asyncProcessInvoiceRecognition(state.files);
+      set({
+        files: updatedFiles,
         recognitionCompleted: true,
         checksCompleted: false,
-      }));
-    }, 800);
+        isProcessing: false,
+      });
+    } catch (error) {
+      console.error('Recognition failed:', error);
+      set({ isProcessing: false });
+    }
   },
 
   updateInvoiceInfo: (fileId: string, updates: Partial<ReimbursementFile['invoiceInfo']>) =>

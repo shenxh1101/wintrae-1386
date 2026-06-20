@@ -1,4 +1,4 @@
-import type { ReimbursementFile, InvoiceType, InvoiceInfo, RecognitionSource, ExcelRowRecord } from '@/types';
+import type { ReimbursementFile, InvoiceType, InvoiceInfo, RecognitionSource, ExcelRowRecord, Issue } from '@/types';
 import { generateId, getFileNameWithoutExtension } from './common';
 import { extractInfoFromFilename, readExcelFile, extractFromExcelData, extractAllRowsFromExcel, readPdfText } from './fileProcessor';
 
@@ -294,6 +294,96 @@ export function updateInvoiceInfo(fileId: string, files: ReimbursementFile[], up
   });
 }
 
+export async function asyncProcessInvoiceRecognition(files: ReimbursementFile[]): Promise<ReimbursementFile[]> {
+  const results = await Promise.all(
+    files.map(async (file) => {
+      let result: ReimbursementFile = { ...file };
+
+      try {
+        const { info, needsManual, recognitionSource, excelSubRows } = await recognizeInvoice(file);
+        result.invoiceInfo = info;
+        result.recognitionSource = recognitionSource;
+        result.excelSubRows = excelSubRows;
+
+        const existingRowUnrecognized = file.issues.filter(i => i.type === 'unrecognized' && i.rowId);
+        const otherIssues = file.issues.filter(i => i.type !== 'unrecognized');
+        const fileLevelIssues: Issue[] = [];
+
+        if (needsManual) {
+          let description = '';
+          let suggestion = '';
+
+          if (file.size === 0) {
+            description = '文件为空，无法识别任何信息';
+            suggestion = '请确认文件是否有效，或重新获取正确的报销附件';
+          } else if (!info.employeeName) {
+            description = '无法识别员工姓名';
+            suggestion = '请手动填写员工姓名、所属部门等信息';
+          } else if (file.type === 'image') {
+            description = '图片文件暂无法识别内容，请人工核对';
+            suggestion = '请手动核对并填写金额、日期、发票号码等信息';
+          } else if (file.type === 'pdf' && info.amount <= 0) {
+            description = 'PDF 无法读取内容，未能提取金额等关键字段';
+            suggestion = '请手动填写金额、日期等关键字段信息';
+          } else {
+            description = '无法完整识别发票信息';
+            suggestion = '请补充完善发票识别信息';
+          }
+
+          fileLevelIssues.push({
+            id: generateId(),
+            fileId: file.id,
+            type: 'unrecognized',
+            level: 'warning',
+            description,
+            suggestion,
+          });
+        }
+
+        let rowLevelIssues: Issue[] = [];
+        if (excelSubRows && excelSubRows.length > 0) {
+          rowLevelIssues = excelSubRows
+            .filter(row => row.needsManual)
+            .map(row => {
+              const missing: string[] = [];
+              if (!row.employeeName) missing.push('员工姓名');
+              if (row.amount <= 0 && row.invoiceType !== 'approval') missing.push('金额');
+              return {
+                id: generateId(),
+                fileId: file.id,
+                rowId: row.id,
+                rowIndex: row.rowIndex,
+                type: 'unrecognized' as const,
+                level: 'warning' as const,
+                description: `第 ${row.rowIndex} 行：缺少${missing.join('、')}，待人工补录`,
+                suggestion: '请点击该行编辑按钮，补录缺失字段后保存',
+              };
+            });
+        }
+
+        result.issues = [...otherIssues, ...fileLevelIssues, ...rowLevelIssues];
+      } catch (e) {
+        console.warn('Recognition error for', file.name, e);
+        result.issues = [
+          ...file.issues.filter(i => i.type !== 'unrecognized'),
+          {
+            id: generateId(),
+            fileId: file.id,
+            type: 'unrecognized',
+            level: 'warning',
+            description: '识别过程出错',
+            suggestion: '请手动检查并补充信息',
+          },
+        ];
+      }
+
+      return result;
+    })
+  );
+
+  return results;
+}
+
 export function updateExcelRowInfo(
   fileId: string,
   rowId: string,
@@ -311,10 +401,29 @@ export function updateExcelRowInfo(
     });
 
     const hasAnyManualRow = updatedRows.some(r => r.manuallySupplemented);
+    const targetRow = updatedRows.find(r => r.id === rowId);
+
+    let newIssues = file.issues.filter(i => !(i.type === 'unrecognized' && i.rowId === rowId));
+    if (targetRow && targetRow.needsManual) {
+      const missing: string[] = [];
+      if (!targetRow.employeeName) missing.push('员工姓名');
+      if (targetRow.amount <= 0 && targetRow.invoiceType !== 'approval') missing.push('金额');
+      newIssues.push({
+        id: generateId(),
+        fileId: file.id,
+        rowId: targetRow.id,
+        rowIndex: targetRow.rowIndex,
+        type: 'unrecognized',
+        level: 'warning',
+        description: `第 ${targetRow.rowIndex} 行：缺少${missing.join('、')}，待人工补录`,
+        suggestion: '请点击该行编辑按钮，补录缺失字段后保存',
+      });
+    }
 
     return {
       ...file,
       excelSubRows: updatedRows,
+      issues: newIssues,
       manuallySupplemented: hasAnyManualRow || !!file.manuallySupplemented,
     };
   });

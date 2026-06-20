@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   FileSearch,
   Play,
@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 import { INVOICE_TYPE_LABELS } from '@/types';
+import type { ReimbursementFile, ExcelRowRecord } from '@/types';
 import { formatAmount, cn } from '@/utils/common';
 
 const SOURCE_LABELS: Record<string, string> = {
@@ -60,16 +61,35 @@ export const Step2Recognize: React.FC = () => {
   const [editingRowId, setEditingRowId] = useState<string | null>(null);
   const [rowForm, setRowForm] = useState<Record<string, string>>({});
 
+  const [rowManualForms, setRowManualForms] = useState<Record<string, { employeeName: string; amount: string; invoiceDate: string; projectName: string }>>({});
+
   const [expandedFiles, setExpandedFiles] = useState<Set<string>>(new Set());
 
-  const manualQueueFiles = files.filter((f) => f.issues.some((i) => i.type === 'unrecognized'));
-  const recognizedCount = files.filter((f) => f.invoiceInfo).length;
-  const unrecognizedCount = files.filter(
-    (f) => !f.invoiceInfo || f.invoiceInfo.employeeName === ''
-  ).length;
+  const manualQueueItems = useMemo(() => {
+    const items: Array<
+      | { kind: 'file'; file: ReimbursementFile }
+      | { kind: 'row'; file: ReimbursementFile; row: ExcelRowRecord }
+    > = [];
+    for (const file of files) {
+      const hasFileLevel = file.issues.some((i) => i.type === 'unrecognized' && !i.rowId);
+      if (hasFileLevel) {
+        items.push({ kind: 'file', file });
+      }
+      const rowIssues = file.issues.filter((i) => i.type === 'unrecognized' && i.rowId);
+      for (const issue of rowIssues) {
+        const row = file.excelSubRows?.find((r) => r.id === issue.rowId);
+        if (row) {
+          items.push({ kind: 'row', file, row });
+        }
+      }
+    }
+    return items;
+  }, [files]);
 
-  const handleStartRecognition = () => {
-    runRecognition();
+  const recognizedCount = files.filter((f) => f.invoiceInfo).length;
+
+  const handleStartRecognition = async () => {
+    await runRecognition();
   };
 
   const getManualForm = (fileId: string) => {
@@ -101,6 +121,38 @@ export const Step2Recognize: React.FC = () => {
     setManualForms((prev) => {
       const next = { ...prev };
       delete next[fileId];
+      return next;
+    });
+  };
+
+  const getRowManualForm = (rowId: string, row?: ExcelRowRecord) => {
+    if (rowManualForms[rowId]) return rowManualForms[rowId];
+    return {
+      employeeName: row?.employeeName || '',
+      amount: String(row?.amount || ''),
+      invoiceDate: row?.invoiceDate || '',
+      projectName: row?.projectName || '',
+    };
+  };
+
+  const handleRowManualFormChange = (rowId: string, field: string, value: string) => {
+    setRowManualForms((prev) => ({
+      ...prev,
+      [rowId]: { ...getRowManualForm(rowId), [field]: value },
+    }));
+  };
+
+  const handleRowManualSave = (fileId: string, rowId: string) => {
+    const form = getRowManualForm(rowId);
+    updateExcelRow(fileId, rowId, {
+      employeeName: form.employeeName,
+      amount: Number(form.amount) || 0,
+      invoiceDate: form.invoiceDate,
+      projectName: form.projectName,
+    });
+    setRowManualForms((prev) => {
+      const next = { ...prev };
+      delete next[rowId];
       return next;
     });
   };
@@ -178,30 +230,107 @@ export const Step2Recognize: React.FC = () => {
         <p className="text-gray-500">自动识别发票类型、金额、员工等关键信息</p>
       </div>
 
-      {manualQueueFiles.length > 0 && (
+      {manualQueueItems.length > 0 && (
         <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
           <div className="flex items-center gap-2 mb-3">
             <ClipboardEdit size={18} className="text-amber-600" />
             <h3 className="font-semibold text-amber-800">待人工补录队列</h3>
             <span className="ml-auto px-2.5 py-0.5 bg-amber-200 text-amber-800 text-xs font-bold rounded-full">
-              {manualQueueFiles.length} 项待补录
+              {manualQueueItems.length} 项待补录
             </span>
           </div>
 
-          <div className="space-y-3">
-            {manualQueueFiles.map((file) => {
-              const form = getManualForm(file.id);
+          <div className="space-y-3 max-h-[420px] overflow-y-auto pr-1">
+            {manualQueueItems.map((item) => {
+              if (item.kind === 'file') {
+                const file = item.file;
+                const form = getManualForm(file.id);
+                const issue = file.issues.find((i) => i.type === 'unrecognized' && !i.rowId);
+                return (
+                  <div
+                    key={`file-${file.id}`}
+                    className="bg-white border border-amber-200 rounded-lg p-3"
+                  >
+                    <div className="flex items-center gap-2 mb-2">
+                      <AlertTriangle size={14} className="text-amber-500 flex-shrink-0" />
+                      <span className="text-sm font-medium text-gray-800 truncate">{file.name}</span>
+                      <RecognitionSourceBadge source={file.recognitionSource} />
+                      <span className="text-xs text-amber-600 truncate flex-shrink-0">
+                        {issue?.description || '待补录'}
+                      </span>
+                    </div>
+
+                    <div className="flex items-end gap-2 flex-wrap">
+                      <div className="flex-1 min-w-[120px]">
+                        <label className="text-xs text-gray-500 mb-0.5 block">姓名</label>
+                        <input
+                          type="text"
+                          className="input text-sm py-1"
+                          placeholder="员工姓名"
+                          value={form.employeeName}
+                          onChange={(e) => handleManualFormChange(file.id, 'employeeName', e.target.value)}
+                        />
+                      </div>
+                      <div className="flex-1 min-w-[100px]">
+                        <label className="text-xs text-gray-500 mb-0.5 block">金额</label>
+                        <input
+                          type="number"
+                          className="input text-sm py-1"
+                          placeholder="0.00"
+                          value={form.amount}
+                          onChange={(e) => handleManualFormChange(file.id, 'amount', e.target.value)}
+                        />
+                      </div>
+                      <div className="flex-1 min-w-[130px]">
+                        <label className="text-xs text-gray-500 mb-0.5 block">日期</label>
+                        <input
+                          type="date"
+                          className="input text-sm py-1"
+                          value={form.invoiceDate}
+                          onChange={(e) => handleManualFormChange(file.id, 'invoiceDate', e.target.value)}
+                        />
+                      </div>
+                      <div className="flex-1 min-w-[120px]">
+                        <label className="text-xs text-gray-500 mb-0.5 block">项目</label>
+                        <input
+                          type="text"
+                          className="input text-sm py-1"
+                          placeholder="项目名称"
+                          value={form.projectName}
+                          onChange={(e) => handleManualFormChange(file.id, 'projectName', e.target.value)}
+                        />
+                      </div>
+                      <button
+                        className="btn btn-primary text-sm py-1 px-3 flex items-center gap-1 flex-shrink-0"
+                        onClick={() => handleManualSave(file.id)}
+                        disabled={!form.employeeName.trim()}
+                      >
+                        <Save size={14} />
+                        保存
+                      </button>
+                    </div>
+                  </div>
+                );
+              }
+
+              const { file, row } = item;
+              const form = getRowManualForm(row.id, row);
+              const rowIssue = file.issues.find((i) => i.type === 'unrecognized' && i.rowId === row.id);
               return (
                 <div
-                  key={file.id}
+                  key={`row-${file.id}-${row.id}`}
                   className="bg-white border border-amber-200 rounded-lg p-3"
                 >
                   <div className="flex items-center gap-2 mb-2">
                     <AlertTriangle size={14} className="text-amber-500 flex-shrink-0" />
-                    <span className="text-sm font-medium text-gray-800 truncate">{file.name}</span>
-                    <RecognitionSourceBadge source={file.recognitionSource} />
+                    <span className="text-sm font-medium text-gray-800 truncate">
+                      {file.name} · 第 {row.rowIndex} 行
+                    </span>
+                    <span className="inline-block px-2 py-0.5 text-xs rounded-full bg-emerald-100 text-emerald-700">
+                      表格明细
+                    </span>
                     <span className="text-xs text-amber-600 truncate flex-shrink-0">
-                      {file.issues.find((i) => i.type === 'unrecognized')?.description}
+                      {rowIssue?.description || '待补录'}
                     </span>
                   </div>
 
@@ -213,7 +342,7 @@ export const Step2Recognize: React.FC = () => {
                         className="input text-sm py-1"
                         placeholder="员工姓名"
                         value={form.employeeName}
-                        onChange={(e) => handleManualFormChange(file.id, 'employeeName', e.target.value)}
+                        onChange={(e) => handleRowManualFormChange(row.id, 'employeeName', e.target.value)}
                       />
                     </div>
                     <div className="flex-1 min-w-[100px]">
@@ -223,7 +352,7 @@ export const Step2Recognize: React.FC = () => {
                         className="input text-sm py-1"
                         placeholder="0.00"
                         value={form.amount}
-                        onChange={(e) => handleManualFormChange(file.id, 'amount', e.target.value)}
+                        onChange={(e) => handleRowManualFormChange(row.id, 'amount', e.target.value)}
                       />
                     </div>
                     <div className="flex-1 min-w-[130px]">
@@ -232,7 +361,7 @@ export const Step2Recognize: React.FC = () => {
                         type="date"
                         className="input text-sm py-1"
                         value={form.invoiceDate}
-                        onChange={(e) => handleManualFormChange(file.id, 'invoiceDate', e.target.value)}
+                        onChange={(e) => handleRowManualFormChange(row.id, 'invoiceDate', e.target.value)}
                       />
                     </div>
                     <div className="flex-1 min-w-[120px]">
@@ -242,12 +371,12 @@ export const Step2Recognize: React.FC = () => {
                         className="input text-sm py-1"
                         placeholder="项目名称"
                         value={form.projectName}
-                        onChange={(e) => handleManualFormChange(file.id, 'projectName', e.target.value)}
+                        onChange={(e) => handleRowManualFormChange(row.id, 'projectName', e.target.value)}
                       />
                     </div>
                     <button
                       className="btn btn-primary text-sm py-1 px-3 flex items-center gap-1 flex-shrink-0"
-                      onClick={() => handleManualSave(file.id)}
+                      onClick={() => handleRowManualSave(file.id, row.id)}
                       disabled={!form.employeeName.trim()}
                     >
                       <Save size={14} />
@@ -285,9 +414,9 @@ export const Step2Recognize: React.FC = () => {
             <span className="text-success-600">
               ✓ 已识别 {recognizedCount} 个
             </span>
-            {unrecognizedCount > 0 && (
+            {manualQueueItems.length > 0 && (
               <span className="text-warning-600">
-                ⚠ 待完善 {unrecognizedCount} 个
+                ⚠ 待补录 {manualQueueItems.length} 项
               </span>
             )}
           </div>

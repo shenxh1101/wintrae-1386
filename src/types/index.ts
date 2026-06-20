@@ -49,6 +49,8 @@ export interface InvoiceInfo {
 export interface Issue {
   id: string;
   fileId: string;
+  rowId?: string;
+  rowIndex?: number;
   type: IssueType;
   level: IssueLevel;
   description: string;
@@ -146,7 +148,7 @@ export const ISSUE_TYPE_LABELS: Record<IssueType, string> = {
   amount_mismatch: '金额不一致',
   missing_approval: '缺少审批单',
   naming_issue: '命名不规范',
-  unrecognized: '无法识别',
+  unrecognized: '待人工补录',
 };
 
 export const CLASSIFICATION_RULE_LABELS: Record<ClassificationRule, string> = {

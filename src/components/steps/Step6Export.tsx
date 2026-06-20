@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   Download,
   FileText,
@@ -13,27 +13,51 @@ import {
 import { useAppStore } from '@/store/useAppStore';
 import { formatAmount, cn } from '@/utils/common';
 import { generateSummaryExcel, generateIssuesExcel, generateRollbackJson, generateFileListZip, downloadBlob } from '@/utils/exporter';
+import { getExpandedEntries } from '@/utils/classifier';
 
 export const Step6Export: React.FC = () => {
   const { files, exportResult, runExport, isProcessing, resetAll, config } = useAppStore();
   const [exportProgress, setExportProgress] = useState(0);
   const [isExporting, setIsExporting] = useState(false);
 
-  const totalAmount = files.reduce((sum, f) => sum + (f.invoiceInfo?.amount || 0), 0);
+  const expandedEntries = useMemo(
+    () => getExpandedEntries(files, config.classificationRule, config.amountRanges),
+    [files, config.classificationRule, config.amountRanges]
+  );
+
+  const totalAmount = expandedEntries.reduce((sum, e) => sum + e.amount, 0);
   const totalIssues = files.reduce((sum, f) => sum + f.issues.length, 0);
   const errorCount = files.reduce(
     (sum, f) => sum + f.issues.filter((i) => i.level === 'error').length,
     0
   );
 
-  const categoryMap: Record<string, typeof files> = {};
-  for (const file of files) {
-    const cat = file.category || '未分类';
-    if (!categoryMap[cat]) {
-      categoryMap[cat] = [];
+  const categoryAgg = useMemo(() => {
+    const agg = new Map<string, { count: number; totalAmount: number; files: typeof files }>();
+    for (const entry of expandedEntries) {
+      if (!agg.has(entry.category)) {
+        agg.set(entry.category, { count: 0, totalAmount: 0, files: [] });
+      }
+      const cat = agg.get(entry.category)!;
+      cat.count++;
+      cat.totalAmount += entry.amount;
+      if (!cat.files.includes(entry.file)) {
+        cat.files.push(entry.file);
+      }
     }
-    categoryMap[cat].push(file);
-  }
+    return agg;
+  }, [expandedEntries]);
+
+  const summaryData = useMemo(() => {
+    return Array.from(categoryAgg.entries()).map(([category, data]) => ({
+      employeeName: category,
+      fileCount: data.count,
+      totalAmount: data.totalAmount,
+      fileNames: expandedEntries
+        .filter((e) => e.category === category)
+        .map((e) => e.label),
+    }));
+  }, [categoryAgg, expandedEntries]);
 
   const handleExport = async () => {
     setIsExporting(true);
@@ -50,14 +74,7 @@ export const Step6Export: React.FC = () => {
   };
 
   const handleDownloadSummary = () => {
-    const blob = generateSummaryExcel(
-      Object.entries(categoryMap).map(([name, fileList]) => ({
-        employeeName: name,
-        fileCount: fileList.length,
-        totalAmount: fileList.reduce((s, f) => s + (f.invoiceInfo?.amount || 0), 0),
-        fileNames: fileList.map((f) => f.newName || f.name),
-      }))
-    );
+    const blob = generateSummaryExcel(summaryData);
     downloadBlob(blob, '报销汇总表.xlsx');
   };
 
@@ -115,8 +132,8 @@ export const Step6Export: React.FC = () => {
 
       <div className="grid grid-cols-4 gap-4 mb-6">
         <div className="bg-white rounded-xl border border-gray-200 p-4">
-          <div className="text-3xl font-bold text-primary-600">{files.length}</div>
-          <div className="text-sm text-gray-500 mt-1">文件总数</div>
+          <div className="text-3xl font-bold text-primary-600">{expandedEntries.length}</div>
+          <div className="text-sm text-gray-500 mt-1">明细条数</div>
         </div>
         <div className="bg-white rounded-xl border border-gray-200 p-4">
           <div className="text-3xl font-bold text-success-600">
@@ -126,7 +143,7 @@ export const Step6Export: React.FC = () => {
         </div>
         <div className="bg-white rounded-xl border border-gray-200 p-4">
           <div className="text-3xl font-bold text-gray-700">
-            {Object.keys(categoryMap).length}
+            {categoryAgg.size}
           </div>
           <div className="text-sm text-gray-500 mt-1">分类数</div>
         </div>
@@ -244,11 +261,7 @@ export const Step6Export: React.FC = () => {
       <div className="bg-white rounded-xl border border-gray-200 p-6">
         <h3 className="font-semibold text-gray-800 mb-4">分类预览</h3>
         <div className="space-y-2 max-h-60 overflow-y-auto">
-          {Object.entries(categoryMap).map(([category, catFiles]) => {
-            const catAmount = catFiles.reduce(
-              (s, f) => s + (f.invoiceInfo?.amount || 0),
-              0
-            );
+          {Array.from(categoryAgg.entries()).map(([category, data]) => {
             return (
               <div
                 key={category}
@@ -259,10 +272,10 @@ export const Step6Export: React.FC = () => {
                     <FileText size={16} className="text-primary-600" />
                   </div>
                   <span className="font-medium text-gray-800">{category}</span>
-                  <span className="text-sm text-gray-500">{catFiles.length} 个文件</span>
+                  <span className="text-sm text-gray-500">{data.count} 条记录</span>
                 </div>
                 <span className="font-semibold text-primary-600">
-                  ¥{formatAmount(catAmount)}
+                  ¥{formatAmount(data.totalAmount)}
                 </span>
               </div>
             );

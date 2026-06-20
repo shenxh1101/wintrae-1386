@@ -118,10 +118,11 @@ export function generateIssuesExcel(files: ReimbursementFile[]): Blob {
   };
 
   const worksheetData = [
-    ['序号', '文件名', '问题类型', '严重级别', '问题描述', '修复建议'],
+    ['序号', '文件名', '所在行', '问题类型', '严重级别', '问题描述', '修复建议'],
     ...allIssues.map((item, index) => [
       index + 1,
       item.file.name,
+      item.issue.rowIndex ? `第 ${item.issue.rowIndex} 行` : '-',
       typeLabels[item.issue.type] || item.issue.type,
       levelLabels[item.issue.level] || item.issue.level,
       item.issue.description,
@@ -133,6 +134,7 @@ export function generateIssuesExcel(files: ReimbursementFile[]): Blob {
   ws['!cols'] = [
     { wch: 8 },
     { wch: 30 },
+    { wch: 12 },
     { wch: 15 },
     { wch: 10 },
     { wch: 40 },
