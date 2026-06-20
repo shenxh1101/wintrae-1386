@@ -24,6 +24,8 @@ interface AppState {
   selectedFileIds: string[];
   isProcessing: boolean;
   exportResult: ExportResult | null;
+  checksCompleted: boolean;
+  recognitionCompleted: boolean;
 
   setCurrentStep: (step: number) => void;
   addFiles: (files: ReimbursementFile[]) => void;
@@ -44,6 +46,7 @@ interface AppState {
 
   runChecks: () => void;
   updateCheckRule: (key: keyof AppConfig['checkRules'], value: boolean) => void;
+  resetChecks: () => void;
 
   runExport: () => Promise<void>;
   resetExport: () => void;
@@ -65,24 +68,30 @@ export const useAppStore = create<AppState>((set, get) => ({
   selectedFileIds: [],
   isProcessing: false,
   exportResult: null,
+  checksCompleted: false,
+  recognitionCompleted: false,
 
   setCurrentStep: (step: number) => set({ currentStep: step }),
 
   addFiles: (newFiles: ReimbursementFile[]) =>
     set((state) => ({
       files: [...state.files, ...newFiles],
+      checksCompleted: false,
     })),
 
   removeFile: (fileId: string) =>
     set((state) => ({
       files: state.files.filter((f) => f.id !== fileId),
       selectedFileIds: state.selectedFileIds.filter((id) => id !== fileId),
+      checksCompleted: false,
     })),
 
   clearFiles: () =>
     set({
       files: [],
       selectedFileIds: [],
+      checksCompleted: false,
+      recognitionCompleted: false,
     }),
 
   toggleFileSelection: (fileId: string) =>
@@ -101,7 +110,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   loadMockData: () => {
     const mockFiles = createMockFiles();
-    set({ files: mockFiles });
+    set({ files: mockFiles, checksCompleted: false, recognitionCompleted: false });
   },
 
   runRecognition: () => {
@@ -110,6 +119,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       set((state) => ({
         files: processInvoiceRecognition(state.files),
         isProcessing: false,
+        recognitionCompleted: true,
+        checksCompleted: false,
       }));
     }, 800);
   },
@@ -134,6 +145,7 @@ export const useAppStore = create<AppState>((set, get) => ({
               },
         };
       }),
+      checksCompleted: false,
     })),
 
   updateClassificationRule: (rule: ClassificationRule) =>
@@ -161,11 +173,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     })),
 
   runChecks: () => {
-    set({ isProcessing: true });
+    set({ isProcessing: true, checksCompleted: false });
     setTimeout(() => {
       set((state) => ({
         files: runAllChecks(state.files, state.config.checkRules),
         isProcessing: false,
+        checksCompleted: true,
       }));
     }, 1000);
   },
@@ -176,7 +189,10 @@ export const useAppStore = create<AppState>((set, get) => ({
         ...state.config,
         checkRules: { ...state.config.checkRules, [key]: value },
       },
+      checksCompleted: false,
     })),
+
+  resetChecks: () => set({ checksCompleted: false }),
 
   runExport: async () => {
     set({ isProcessing: true });
@@ -204,5 +220,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       isProcessing: false,
       exportResult: null,
       config: initialConfig,
+      checksCompleted: false,
+      recognitionCompleted: false,
     }),
 }));

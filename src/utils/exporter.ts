@@ -189,10 +189,15 @@ export async function runExport(
   const summaryBlob = generateSummaryExcel(summaryData);
   const issuesBlob = generateIssuesExcel(files);
   const rollbackBlob = generateRollbackJson(rollbackLog);
+  const zipBlob = await generateFileListZip(files);
 
   downloadBlob(summaryBlob, `报销汇总表_${dateStr}.xlsx`);
+  await new Promise(r => setTimeout(r, 200));
   downloadBlob(issuesBlob, `问题清单_${dateStr}.xlsx`);
+  await new Promise(r => setTimeout(r, 200));
   downloadBlob(rollbackBlob, `回退记录_${dateStr}.json`);
+  await new Promise(r => setTimeout(r, 200));
+  downloadBlob(zipBlob, `规范附件目录_${dateStr}.zip`);
 
   return {
     success: true,

@@ -5,6 +5,13 @@ const IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'tiff'];
 const PDF_EXTENSIONS = ['pdf'];
 const EXCEL_EXTENSIONS = ['xls', 'xlsx', 'csv'];
 
+export const SUPPORTED_EXTENSIONS = [
+  ...IMAGE_EXTENSIONS,
+  ...PDF_EXTENSIONS,
+  ...EXCEL_EXTENSIONS,
+  'doc', 'docx', 'txt'
+];
+
 export function detectFileType(filename: string): FileType {
   const ext = getFileExtension(filename);
   if (PDF_EXTENSIONS.includes(ext)) return 'pdf';
@@ -13,14 +20,20 @@ export function detectFileType(filename: string): FileType {
   return 'other';
 }
 
-export function createFileFromBrowserFile(file: File, relativePath = ''): ReimbursementFile {
+export function isSupportedFile(filename: string): boolean {
+  const ext = getFileExtension(filename).toLowerCase();
+  return SUPPORTED_EXTENSIONS.includes(ext);
+}
+
+export function createFileFromBrowserFile(file: File): ReimbursementFile {
   const type = detectFileType(file.name);
+  const relativePath = (file as any).webkitRelativePath || file.name;
   return {
     id: generateId(),
     name: file.name,
     originalName: file.name,
     path: file.name,
-    relativePath: relativePath || file.name,
+    relativePath,
     type,
     size: file.size,
     lastModified: file.lastModified,
@@ -32,29 +45,159 @@ export function createFileFromBrowserFile(file: File, relativePath = ''): Reimbu
   };
 }
 
+export function createFileListFromFolder(files: FileList | File[]): ReimbursementFile[] {
+  const result: ReimbursementFile[] = [];
+  const fileArray = Array.from(files);
+
+  for (const file of fileArray) {
+    if (isSupportedFile(file.name)) {
+      result.push(createFileFromBrowserFile(file));
+    }
+  }
+
+  return result;
+}
+
+interface MockFileData {
+  name: string;
+  relativePath: string;
+  type: string;
+  size: number;
+  amount: number;
+  employee: string;
+  date: string;
+  invoiceType: InvoiceType;
+  hasExcelContent?: boolean;
+  isUnrecognizable?: boolean;
+  invoiceNumber?: string;
+}
+
 export function createMockFiles(): ReimbursementFile[] {
-  const mockData: { name: string; type: string; size: number; amount: number; employee: string; date: string; invoiceType: InvoiceType }[] = [
-    { name: '张三_202401_差旅费发票1.pdf', type: 'pdf', size: 245000, amount: 1280.50, employee: '张三', date: '2024-01-15', invoiceType: 'vat_general' },
-    { name: '张三_202401_交通费.pdf', type: 'pdf', size: 128000, amount: 356.00, employee: '张三', date: '2024-01-20', invoiceType: 'electronic' },
-    { name: '张三_报销审批单.docx', type: 'other', size: 45000, amount: 0, employee: '张三', date: '2024-01-10', invoiceType: 'approval' },
-    { name: '李四_餐饮发票.jpg', type: 'image', size: 890000, amount: 568.00, employee: '李四', date: '2024-01-12', invoiceType: 'vat_general' },
-    { name: '李四_住宿费.pdf', type: 'pdf', size: 312000, amount: 899.00, employee: '李四', date: '2024-01-18', invoiceType: 'vat_special' },
-    { name: '王五_办公用品发票.xlsx', type: 'excel', size: 23000, amount: 1200.00, employee: '王五', date: '2024-01-05', invoiceType: 'vat_special' },
-    { name: '王五_通讯费.pdf', type: 'pdf', size: 98000, amount: 199.00, employee: '王五', date: '2024-01-22', invoiceType: 'electronic' },
-    { name: '赵六_出租车票.pdf', type: 'pdf', size: 156000, amount: 234.50, employee: '赵六', date: '2024-01-08', invoiceType: 'receipt' },
-    { name: '赵六_会务费.pdf', type: 'pdf', size: 425000, amount: 3500.00, employee: '赵六', date: '2024-01-25', invoiceType: 'vat_special' },
-    { name: '空白文件.pdf', type: 'pdf', size: 0, amount: 0, employee: '', date: '', invoiceType: 'other' },
-    { name: 'IMG_20240115_123456.jpg', type: 'image', size: 1560000, amount: 789.00, employee: '张三', date: '2024-01-15', invoiceType: 'vat_general' },
-    { name: '重复发票_张三.pdf', type: 'pdf', size: 245000, amount: 1280.50, employee: '张三', date: '2024-01-15', invoiceType: 'vat_general' },
+  const mockData: MockFileData[] = [
+    {
+      name: '张三_202401_差旅费报销1280.50元.pdf',
+      relativePath: '2024年1月报销/技术部/张三/张三_202401_差旅费报销1280.50元.pdf',
+      type: 'pdf', size: 245000, amount: 1280.50, employee: '张三',
+      date: '2024-01-15', invoiceType: 'vat_general', invoiceNumber: 'INV20240115001'
+    },
+    {
+      name: '张三_交通费356元.pdf',
+      relativePath: '2024年1月报销/技术部/张三/张三_交通费356元.pdf',
+      type: 'pdf', size: 128000, amount: 356.00, employee: '张三',
+      date: '2024-01-20', invoiceType: 'electronic', invoiceNumber: 'DZ20240120088'
+    },
+    {
+      name: '张三_报销审批单.pdf',
+      relativePath: '2024年1月报销/技术部/张三/张三_报销审批单.pdf',
+      type: 'pdf', size: 45000, amount: 0, employee: '张三',
+      date: '2024-01-10', invoiceType: 'approval'
+    },
+    {
+      name: '发票扫描件_001.jpg',
+      relativePath: '2024年1月报销/技术部/张三/发票扫描件_001.jpg',
+      type: 'image', size: 1560000, amount: 0, employee: '',
+      date: '', invoiceType: 'other', isUnrecognizable: true
+    },
+    {
+      name: '李四_餐饮568元.jpg',
+      relativePath: '2024年1月报销/市场部/李四/李四_餐饮568元.jpg',
+      type: 'image', size: 890000, amount: 568.00, employee: '李四',
+      date: '2024-01-12', invoiceType: 'vat_general', invoiceNumber: 'INV20240112045'
+    },
+    {
+      name: '李四_住宿费899元_202401.pdf',
+      relativePath: '2024年1月报销/市场部/李四/李四_住宿费899元_202401.pdf',
+      type: 'pdf', size: 312000, amount: 999.00, employee: '李四',
+      date: '2024-01-18', invoiceType: 'vat_special', invoiceNumber: 'ZZ20240118012'
+    },
+    {
+      name: '报销汇总_王五.xlsx',
+      relativePath: '2024年1月报销/产品部/王五/报销汇总_王五.xlsx',
+      type: 'excel', size: 23000, amount: 1200.00, employee: '王五',
+      date: '2024-01-05', invoiceType: 'vat_special', hasExcelContent: true,
+      invoiceNumber: 'ZZ20240105033'
+    },
+    {
+      name: '王五_通讯费199元.pdf',
+      relativePath: '2024年1月报销/产品部/王五/王五_通讯费199元.pdf',
+      type: 'pdf', size: 98000, amount: 199.00, employee: '王五',
+      date: '2024-01-22', invoiceType: 'electronic', invoiceNumber: 'DZ20240122156'
+    },
+    {
+      name: '王五_审批单.pdf',
+      relativePath: '2024年1月报销/产品部/王五/王五_审批单.pdf',
+      type: 'pdf', size: 38000, amount: 0, employee: '王五',
+      date: '2024-01-01', invoiceType: 'approval'
+    },
+    {
+      name: '赵六_出租车票234.50元.pdf',
+      relativePath: '2024年1月报销/市场部/赵六/赵六_出租车票234.50元.pdf',
+      type: 'pdf', size: 156000, amount: 234.50, employee: '赵六',
+      date: '2024-01-08', invoiceType: 'receipt', invoiceNumber: 'SK20240108211'
+    },
+    {
+      name: '赵六_会务费_市场推广项目.pdf',
+      relativePath: '2024年1月报销/市场部/赵六/赵六_会务费_市场推广项目.pdf',
+      type: 'pdf', size: 425000, amount: 3500.00, employee: '赵六',
+      date: '2024-01-25', invoiceType: 'vat_special', invoiceNumber: 'ZZ20240125007'
+    },
+    {
+      name: '空白文件.pdf',
+      relativePath: '2024年1月报销/异常文件/空白文件.pdf',
+      type: 'pdf', size: 0, amount: 0, employee: '',
+      date: '', invoiceType: 'other'
+    },
+    {
+      name: '重复发票_差旅1280.5元.pdf',
+      relativePath: '2024年1月报销/技术部/张三/重复发票_差旅1280.5元.pdf',
+      type: 'pdf', size: 245000, amount: 1280.50, employee: '张三',
+      date: '2024-01-15', invoiceType: 'vat_general', invoiceNumber: 'INV20240115001'
+    },
+    {
+      name: '未命名扫描件_0001.pdf',
+      relativePath: '2024年1月报销/待处理/未命名扫描件_0001.pdf',
+      type: 'pdf', size: 267000, amount: 0, employee: '',
+      date: '', invoiceType: 'other', isUnrecognizable: true
+    },
+    {
+      name: '部门消费记录.csv',
+      relativePath: '2024年1月报销/汇总/部门消费记录.csv',
+      type: 'excel', size: 5600, amount: 0, employee: '',
+      date: '', invoiceType: 'other', hasExcelContent: true
+    },
   ];
 
   return mockData.map(item => {
+    const issues: ReimbursementFile['issues'] = [];
+
+    if (item.isUnrecognizable) {
+      issues.push({
+        id: generateId(),
+        fileId: '',
+        type: 'unrecognized',
+        level: 'warning',
+        description: '无法从内容识别发票信息，请人工补录',
+        suggestion: '点击编辑按钮手动填写员工姓名、金额等信息',
+      });
+    }
+
+    if (item.employee === '李四' && item.amount === 999.00 && item.name.includes('899')) {
+      issues.push({
+        id: generateId(),
+        fileId: '',
+        type: 'amount_mismatch',
+        level: 'warning',
+        description: `文件名金额(899.00元)与识别金额(999.00元)不一致`,
+        suggestion: '请核实实际报销金额，确保票据金额与报销金额一致',
+      });
+    }
+
     const file: ReimbursementFile = {
       id: generateId(),
       name: item.name,
       originalName: item.name,
-      path: item.name,
-      relativePath: item.name,
+      path: item.relativePath,
+      relativePath: item.relativePath,
       type: item.type as FileType,
       size: item.size,
       lastModified: new Date(item.date || '2024-01-01').getTime(),
@@ -63,14 +206,20 @@ export function createMockFiles(): ReimbursementFile[] {
       isSelected: false,
       invoiceInfo: {
         invoiceType: item.invoiceType,
-        invoiceNumber: 'INV' + Math.random().toString(36).substring(2, 10).toUpperCase(),
+        invoiceNumber: item.invoiceNumber || ('INV' + Math.random().toString(36).substring(2, 8).toUpperCase()),
         amount: item.amount,
         invoiceDate: item.date,
         employeeName: item.employee,
-        projectName: item.employee === '赵六' && item.amount > 1000 ? '市场推广项目' : '日常运营',
-        department: item.employee ? '技术部' : '未知',
+        projectName: item.relativePath.includes('市场推广') ? '市场推广项目' : '日常运营',
+        department: item.relativePath.includes('技术部') ? '技术部'
+          : item.relativePath.includes('市场部') ? '市场部'
+          : item.relativePath.includes('产品部') ? '产品部' : '未知',
       },
     };
+
+    issues.forEach(i => i.fileId = file.id);
+    file.issues = issues;
+
     return file;
   });
 }
@@ -98,6 +247,82 @@ export function extractInfoFromFilename(filename: string): Partial<InvoiceInfo> 
   }
 
   return result;
+}
+
+export async function readExcelFile(file: File): Promise<Record<string, any>[] | null> {
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const XLSX = await import('xlsx');
+    const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+    const firstSheetName = workbook.SheetNames[0];
+    if (!firstSheetName) return null;
+    const worksheet = workbook.Sheets[firstSheetName];
+    return XLSX.utils.sheet_to_json(worksheet);
+  } catch (e) {
+    console.warn('Failed to read Excel:', e);
+    return null;
+  }
+}
+
+export function extractFromExcelData(rows: Record<string, any>[]): Partial<InvoiceInfo> {
+  if (!rows || rows.length === 0) return {};
+  const result: Partial<InvoiceInfo> = {};
+  const firstRow = rows[0];
+  const allKeys = Object.keys(firstRow).map(k => k.toLowerCase());
+
+  const findValue = (keywords: string[]): any => {
+    for (const key of Object.keys(firstRow)) {
+      const lowerKey = key.toLowerCase();
+      if (keywords.some(kw => lowerKey.includes(kw))) {
+        return firstRow[key];
+      }
+    }
+    for (const row of rows) {
+      for (const key of Object.keys(row)) {
+        const lowerKey = key.toLowerCase();
+        if (keywords.some(kw => lowerKey.includes(kw))) {
+          return row[key];
+        }
+      }
+    }
+    return undefined;
+  };
+
+  const nameVal = findValue(['姓名', '员工', '报销人', 'name', 'employee']);
+  if (nameVal && typeof nameVal === 'string') {
+    result.employeeName = nameVal.trim();
+  }
+
+  const amountVal = findValue(['金额', '费用', '合计', '总价', 'amount', 'price', 'total']);
+  if (amountVal !== undefined && !isNaN(parseFloat(String(amountVal)))) {
+    result.amount = parseFloat(String(amountVal));
+  }
+
+  const dateVal = findValue(['日期', '时间', 'date', 'time']);
+  if (dateVal) {
+    const d = new Date(dateVal);
+    if (!isNaN(d.getTime())) {
+      result.invoiceDate = d.toISOString().split('T')[0];
+    } else if (typeof dateVal === 'string') {
+      result.invoiceDate = dateVal;
+    }
+  }
+
+  const projectVal = findValue(['项目', 'project', '用途', '科目']);
+  if (projectVal && typeof projectVal === 'string') {
+    result.projectName = projectVal.trim();
+  }
+
+  const deptVal = findValue(['部门', 'department', 'dept']);
+  if (deptVal && typeof deptVal === 'string') {
+    result.department = deptVal.trim();
+  }
+
+  return result;
+}
+
+export async function readPdfText(file: File): Promise<string | null> {
+  return null;
 }
 
 export function createFilePreview(file: ReimbursementFile): Promise<string | undefined> {

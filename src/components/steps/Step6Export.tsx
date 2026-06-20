@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 import { formatAmount, cn } from '@/utils/common';
-import { generateSummaryExcel, generateIssuesExcel, generateRollbackJson, downloadBlob } from '@/utils/exporter';
+import { generateSummaryExcel, generateIssuesExcel, generateRollbackJson, generateFileListZip, downloadBlob } from '@/utils/exporter';
 
 export const Step6Export: React.FC = () => {
   const { files, exportResult, runExport, isProcessing, resetAll, config } = useAppStore();
@@ -76,6 +76,12 @@ export const Step6Export: React.FC = () => {
     }));
     const blob = generateRollbackJson(rollbackData);
     downloadBlob(blob, '回退记录.json');
+  };
+
+  const handleDownloadZip = async () => {
+    const blob = await generateFileListZip(files);
+    const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    downloadBlob(blob, `规范附件目录_${dateStr}.zip`);
   };
 
   const handleStartOver = () => {
@@ -143,7 +149,7 @@ export const Step6Export: React.FC = () => {
           导出内容
         </h3>
 
-        <div className="grid grid-cols-3 gap-4 mb-6">
+        <div className="grid grid-cols-4 gap-4 mb-6">
           <div className="p-4 bg-gray-50 rounded-xl border border-gray-200">
             <div className="w-12 h-12 rounded-lg bg-green-100 flex items-center justify-center mb-3">
               <TableIcon size={24} className="text-green-600" />
@@ -171,6 +177,16 @@ export const Step6Export: React.FC = () => {
             <div className="font-medium text-gray-800">回退记录</div>
             <div className="text-sm text-gray-500 mt-1">
               JSON 格式，记录原始路径和新路径的映射
+            </div>
+          </div>
+
+          <div className="p-4 bg-primary-50 rounded-xl border border-primary-200">
+            <div className="w-12 h-12 rounded-lg bg-primary-100 flex items-center justify-center mb-3">
+              <RefreshCw size={24} className="text-primary-600" />
+            </div>
+            <div className="font-medium text-gray-800">规范附件目录包</div>
+            <div className="text-sm text-gray-500 mt-1">
+              ZIP 压缩包，按分类规则整理并重命名原附件
             </div>
           </div>
         </div>
@@ -262,7 +278,7 @@ export const Step6Export: React.FC = () => {
           <RotateCcw size={18} />
           重新开始
         </button>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
           <button className="btn btn-secondary text-sm" onClick={handleDownloadSummary}>
             <TableIcon size={16} />
             下载汇总表
@@ -274,6 +290,10 @@ export const Step6Export: React.FC = () => {
           <button className="btn btn-secondary text-sm" onClick={handleDownloadRollback}>
             <FileJson size={16} />
             下载回退记录
+          </button>
+          <button className="btn btn-primary text-sm" onClick={handleDownloadZip}>
+            <Archive size={16} />
+            下载规范附件包
           </button>
         </div>
       </div>
