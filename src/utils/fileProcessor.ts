@@ -307,13 +307,38 @@ export function extractFromExcelData(rows: Record<string, any>[]): Partial<Invoi
   }
 
   const dateVal = findValue(['日期', '时间', 'date', 'time']);
-  if (dateVal) {
-    const d = new Date(dateVal);
-    if (!isNaN(d.getTime())) {
-      result.invoiceDate = d.toISOString().split('T')[0];
+  if (dateVal || dateVal === 0) {
+    let parsed = '';
+    if (typeof dateVal === 'number') {
+      const utcDays = Math.floor(dateVal - 25569);
+      const utcValue = utcDays * 86400;
+      const d = new Date(utcValue * 1000);
+      if (!isNaN(d.getTime())) {
+        const y = d.getUTCFullYear();
+        const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+        const day = String(d.getUTCDate()).padStart(2, '0');
+        parsed = `${y}-${m}-${day}`;
+      }
+    } else if (dateVal instanceof Date) {
+      if (!isNaN(dateVal.getTime())) {
+        const y = dateVal.getFullYear();
+        const m = String(dateVal.getMonth() + 1).padStart(2, '0');
+        const day = String(dateVal.getDate()).padStart(2, '0');
+        parsed = `${y}-${m}-${day}`;
+      }
     } else if (typeof dateVal === 'string') {
-      result.invoiceDate = dateVal;
+      const trimmed = dateVal.trim();
+      const d = new Date(trimmed);
+      if (!isNaN(d.getTime())) {
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        parsed = `${y}-${m}-${day}`;
+      } else {
+        parsed = trimmed;
+      }
     }
+    if (parsed) result.invoiceDate = parsed;
   }
 
   const projectVal = findValue(['项目', 'project', '用途', '科目']);
@@ -343,10 +368,40 @@ export function extractAllRowsFromExcel(rows: Record<string, any>[]): ExcelRowRe
   };
 
   const parseDate = (val: any): string => {
-    if (!val) return '';
-    const d = new Date(val);
-    if (!isNaN(d.getTime())) return d.toISOString().split('T')[0];
-    if (typeof val === 'string') return val;
+    if (!val && val !== 0) return '';
+    if (typeof val === 'number') {
+      const utcDays = Math.floor(val - 25569);
+      const utcValue = utcDays * 86400;
+      const d = new Date(utcValue * 1000);
+      if (!isNaN(d.getTime())) {
+        const y = d.getUTCFullYear();
+        const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+        const day = String(d.getUTCDate()).padStart(2, '0');
+        return `${y}-${m}-${day}`;
+      }
+      return '';
+    }
+    if (val instanceof Date) {
+      if (!isNaN(val.getTime())) {
+        const y = val.getFullYear();
+        const m = String(val.getMonth() + 1).padStart(2, '0');
+        const day = String(val.getDate()).padStart(2, '0');
+        return `${y}-${m}-${day}`;
+      }
+      return '';
+    }
+    if (typeof val === 'string') {
+      const trimmed = val.trim();
+      if (!trimmed) return '';
+      const d = new Date(trimmed);
+      if (!isNaN(d.getTime())) {
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${y}-${m}-${day}`;
+      }
+      return trimmed;
+    }
     return '';
   };
 

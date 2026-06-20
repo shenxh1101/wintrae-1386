@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 import { formatAmount, cn } from '@/utils/common';
-import { generateSummaryExcel, generateIssuesExcel, generateRollbackJson, generateFileListZip, downloadBlob } from '@/utils/exporter';
+import { generateSummaryExcel, generateIssuesExcel, generateRollbackJson, generateFileListZip, generateDetailListExcel, downloadBlob } from '@/utils/exporter';
 import { getExpandedEntries } from '@/utils/classifier';
 
 export const Step6Export: React.FC = () => {
@@ -101,6 +101,11 @@ export const Step6Export: React.FC = () => {
     downloadBlob(blob, `规范附件目录_${dateStr}.zip`);
   };
 
+  const handleDownloadDetailList = () => {
+    const blob = generateDetailListExcel(files, config.classificationRule, config.amountRanges);
+    downloadBlob(blob, '报销明细清单.xlsx');
+  };
+
   const handleStartOver = () => {
     if (window.confirm('确定要重新开始吗？所有数据将被清空。')) {
       resetAll();
@@ -166,14 +171,24 @@ export const Step6Export: React.FC = () => {
           导出内容
         </h3>
 
-        <div className="grid grid-cols-4 gap-4 mb-6">
+        <div className="grid grid-cols-5 gap-3 mb-6">
           <div className="p-4 bg-gray-50 rounded-xl border border-gray-200">
             <div className="w-12 h-12 rounded-lg bg-green-100 flex items-center justify-center mb-3">
               <TableIcon size={24} className="text-green-600" />
             </div>
-            <div className="font-medium text-gray-800">报销汇总表</div>
-            <div className="text-sm text-gray-500 mt-1">
-              Excel 格式，包含各分类的文件和金额统计
+            <div className="font-medium text-gray-800 text-sm">报销汇总表</div>
+            <div className="text-xs text-gray-500 mt-1">
+              Excel 格式，各分类金额统计
+            </div>
+          </div>
+
+          <div className="p-4 bg-gray-50 rounded-xl border border-gray-200">
+            <div className="w-12 h-12 rounded-lg bg-purple-100 flex items-center justify-center mb-3">
+              <TableIcon size={24} className="text-purple-600" />
+            </div>
+            <div className="font-medium text-gray-800 text-sm">明细清单</div>
+            <div className="text-xs text-gray-500 mt-1">
+              Excel 格式，逐行列示每笔报销
             </div>
           </div>
 
@@ -181,9 +196,9 @@ export const Step6Export: React.FC = () => {
             <div className="w-12 h-12 rounded-lg bg-orange-100 flex items-center justify-center mb-3">
               <FileText size={24} className="text-orange-600" />
             </div>
-            <div className="font-medium text-gray-800">问题清单</div>
-            <div className="text-sm text-gray-500 mt-1">
-              Excel 格式，列出所有检测到的问题和建议
+            <div className="font-medium text-gray-800 text-sm">问题清单</div>
+            <div className="text-xs text-gray-500 mt-1">
+              Excel 格式，所有问题和建议
             </div>
           </div>
 
@@ -191,9 +206,9 @@ export const Step6Export: React.FC = () => {
             <div className="w-12 h-12 rounded-lg bg-blue-100 flex items-center justify-center mb-3">
               <FileJson size={24} className="text-blue-600" />
             </div>
-            <div className="font-medium text-gray-800">回退记录</div>
-            <div className="text-sm text-gray-500 mt-1">
-              JSON 格式，记录原始路径和新路径的映射
+            <div className="font-medium text-gray-800 text-sm">回退记录</div>
+            <div className="text-xs text-gray-500 mt-1">
+              JSON 格式，新旧路径映射
             </div>
           </div>
 
@@ -201,9 +216,9 @@ export const Step6Export: React.FC = () => {
             <div className="w-12 h-12 rounded-lg bg-primary-100 flex items-center justify-center mb-3">
               <RefreshCw size={24} className="text-primary-600" />
             </div>
-            <div className="font-medium text-gray-800">规范附件目录包</div>
-            <div className="text-sm text-gray-500 mt-1">
-              ZIP 压缩包，按分类规则整理并重命名原附件
+            <div className="font-medium text-gray-800 text-sm">规范附件包</div>
+            <div className="text-xs text-gray-500 mt-1">
+              ZIP，含目录索引+明细清单
             </div>
           </div>
         </div>
@@ -295,6 +310,10 @@ export const Step6Export: React.FC = () => {
           <button className="btn btn-secondary text-sm" onClick={handleDownloadSummary}>
             <TableIcon size={16} />
             下载汇总表
+          </button>
+          <button className="btn btn-secondary text-sm" onClick={handleDownloadDetailList}>
+            <TableIcon size={16} />
+            下载明细清单
           </button>
           <button className="btn btn-secondary text-sm" onClick={handleDownloadIssues}>
             <FileText size={16} />

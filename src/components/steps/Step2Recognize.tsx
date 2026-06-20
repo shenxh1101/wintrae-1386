@@ -65,6 +65,12 @@ export const Step2Recognize: React.FC = () => {
 
   const [expandedFiles, setExpandedFiles] = useState<Set<string>>(new Set());
 
+  const [selectedRowIds, setSelectedRowIds] = useState<Set<string>>(new Set());
+  const [batchModalOpen, setBatchModalOpen] = useState(false);
+  const [batchField, setBatchField] = useState<'projectName' | 'department' | 'employeeName'>('projectName');
+  const [batchValue, setBatchValue] = useState('');
+  const [activeBatchFileId, setActiveBatchFileId] = useState<string | null>(null);
+
   const manualQueueItems = useMemo(() => {
     const items: Array<
       | { kind: 'file'; file: ReimbursementFile }
@@ -135,15 +141,15 @@ export const Step2Recognize: React.FC = () => {
     };
   };
 
-  const handleRowManualFormChange = (rowId: string, field: string, value: string) => {
+  const handleRowManualFormChange = (rowId: string, field: string, value: string, row?: ExcelRowRecord) => {
     setRowManualForms((prev) => ({
       ...prev,
-      [rowId]: { ...getRowManualForm(rowId), [field]: value },
+      [rowId]: { ...getRowManualForm(rowId, row), [field]: value },
     }));
   };
 
-  const handleRowManualSave = (fileId: string, rowId: string) => {
-    const form = getRowManualForm(rowId);
+  const handleRowManualSave = (fileId: string, rowId: string, row?: ExcelRowRecord) => {
+    const form = getRowManualForm(rowId, row);
     updateExcelRow(fileId, rowId, {
       employeeName: form.employeeName,
       amount: Number(form.amount) || 0,
@@ -169,13 +175,59 @@ export const Step2Recognize: React.FC = () => {
     });
   };
 
-  const handleRowEdit = (row: { id: string; employeeName: string; amount: number; invoiceDate: string; projectName: string }) => {
+  const toggleRowSelect = (rowId: string, fileId: string) => {
+    setSelectedRowIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(rowId)) {
+        next.delete(rowId);
+      } else {
+        next.add(rowId);
+      }
+      return next;
+    });
+    setActiveBatchFileId(fileId);
+  };
+
+  const selectAllRows = (file: ReimbursementFile) => {
+    if (!file.excelSubRows) return;
+    setSelectedRowIds(new Set(file.excelSubRows.map(r => r.id)));
+    setActiveBatchFileId(file.id);
+  };
+
+  const clearSelectedRows = () => {
+    setSelectedRowIds(new Set());
+    setActiveBatchFileId(null);
+  };
+
+  const openBatchModal = (fileId: string) => {
+    setActiveBatchFileId(fileId);
+    setBatchField('projectName');
+    setBatchValue('');
+    setBatchModalOpen(true);
+  };
+
+  const handleBatchSave = () => {
+    if (!activeBatchFileId || !batchValue.trim()) return;
+    const file = files.find(f => f.id === activeBatchFileId);
+    if (!file?.excelSubRows) return;
+
+    const updates: Partial<ExcelRowRecord> = { [batchField]: batchValue.trim() } as Partial<ExcelRowRecord>;
+    for (const rowId of selectedRowIds) {
+      updateExcelRow(activeBatchFileId, rowId, updates);
+    }
+
+    clearSelectedRows();
+    setBatchModalOpen(false);
+  };
+
+  const handleRowEdit = (row: ExcelRowRecord) => {
     setEditingRowId(row.id);
     setRowForm({
       employeeName: row.employeeName,
       amount: String(row.amount),
       invoiceDate: row.invoiceDate,
       projectName: row.projectName,
+      department: row.department,
     });
   };
 
@@ -185,6 +237,7 @@ export const Step2Recognize: React.FC = () => {
       amount: Number(rowForm.amount) || 0,
       invoiceDate: rowForm.invoiceDate,
       projectName: rowForm.projectName,
+      department: rowForm.department,
     });
     setEditingRowId(null);
     setRowForm({});
@@ -342,7 +395,7 @@ export const Step2Recognize: React.FC = () => {
                         className="input text-sm py-1"
                         placeholder="员工姓名"
                         value={form.employeeName}
-                        onChange={(e) => handleRowManualFormChange(row.id, 'employeeName', e.target.value)}
+                        onChange={(e) => handleRowManualFormChange(row.id, 'employeeName', e.target.value, row)}
                       />
                     </div>
                     <div className="flex-1 min-w-[100px]">
@@ -352,7 +405,7 @@ export const Step2Recognize: React.FC = () => {
                         className="input text-sm py-1"
                         placeholder="0.00"
                         value={form.amount}
-                        onChange={(e) => handleRowManualFormChange(row.id, 'amount', e.target.value)}
+                        onChange={(e) => handleRowManualFormChange(row.id, 'amount', e.target.value, row)}
                       />
                     </div>
                     <div className="flex-1 min-w-[130px]">
@@ -361,7 +414,7 @@ export const Step2Recognize: React.FC = () => {
                         type="date"
                         className="input text-sm py-1"
                         value={form.invoiceDate}
-                        onChange={(e) => handleRowManualFormChange(row.id, 'invoiceDate', e.target.value)}
+                        onChange={(e) => handleRowManualFormChange(row.id, 'invoiceDate', e.target.value, row)}
                       />
                     </div>
                     <div className="flex-1 min-w-[120px]">
@@ -371,12 +424,12 @@ export const Step2Recognize: React.FC = () => {
                         className="input text-sm py-1"
                         placeholder="项目名称"
                         value={form.projectName}
-                        onChange={(e) => handleRowManualFormChange(row.id, 'projectName', e.target.value)}
+                        onChange={(e) => handleRowManualFormChange(row.id, 'projectName', e.target.value, row)}
                       />
                     </div>
                     <button
                       className="btn btn-primary text-sm py-1 px-3 flex items-center gap-1 flex-shrink-0"
-                      onClick={() => handleRowManualSave(file.id, row.id)}
+                      onClick={() => handleRowManualSave(file.id, row.id, row)}
                       disabled={!form.employeeName.trim()}
                     >
                       <Save size={14} />
@@ -615,14 +668,48 @@ export const Step2Recognize: React.FC = () => {
 
                       {expandedFiles.has(file.id) && (
                         <div className="mt-2 overflow-x-auto">
+                          {selectedRowIds.size > 0 && activeBatchFileId === file.id && (
+                            <div className="mb-2 flex items-center gap-2 p-2 bg-primary-50 rounded-lg border border-primary-200">
+                              <span className="text-xs text-primary-700 font-medium">
+                                已选 {selectedRowIds.size} 行
+                              </span>
+                              <button
+                                className="btn btn-primary text-xs py-0.5 px-2"
+                                onClick={() => openBatchModal(file.id)}
+                              >
+                                批量补录
+                              </button>
+                              <button
+                                className="btn btn-secondary text-xs py-0.5 px-2"
+                                onClick={clearSelectedRows}
+                              >
+                                取消选择
+                              </button>
+                            </div>
+                          )}
                           <table className="w-full text-xs border-collapse">
                             <thead>
                               <tr className="bg-gray-50">
+                                <th className="px-2 py-1.5 text-left text-gray-500 font-medium border-b w-8">
+                                  <input
+                                    type="checkbox"
+                                    className="rounded text-primary-600"
+                                    checked={file.excelSubRows?.every(r => selectedRowIds.has(r.id)) || false}
+                                    onChange={() => {
+                                      if (file.excelSubRows?.every(r => selectedRowIds.has(r.id))) {
+                                        clearSelectedRows();
+                                      } else {
+                                        selectAllRows(file);
+                                      }
+                                    }}
+                                  />
+                                </th>
                                 <th className="px-2 py-1.5 text-left text-gray-500 font-medium border-b">行号</th>
                                 <th className="px-2 py-1.5 text-left text-gray-500 font-medium border-b">姓名</th>
                                 <th className="px-2 py-1.5 text-left text-gray-500 font-medium border-b">金额</th>
                                 <th className="px-2 py-1.5 text-left text-gray-500 font-medium border-b">日期</th>
                                 <th className="px-2 py-1.5 text-left text-gray-500 font-medium border-b">项目</th>
+                                <th className="px-2 py-1.5 text-left text-gray-500 font-medium border-b">部门</th>
                                 <th className="px-2 py-1.5 text-left text-gray-500 font-medium border-b">状态</th>
                                 <th className="px-2 py-1.5 text-left text-gray-500 font-medium border-b">操作</th>
                               </tr>
@@ -633,9 +720,18 @@ export const Step2Recognize: React.FC = () => {
                                   key={row.id}
                                   className={cn(
                                     'border-b border-gray-50',
-                                    row.needsManual && 'bg-amber-50'
+                                    row.needsManual && 'bg-amber-50',
+                                    selectedRowIds.has(row.id) && 'bg-primary-50/60'
                                   )}
                                 >
+                                  <td className="px-2 py-1.5">
+                                    <input
+                                      type="checkbox"
+                                      className="rounded text-primary-600"
+                                      checked={selectedRowIds.has(row.id)}
+                                      onChange={() => toggleRowSelect(row.id, file.id)}
+                                    />
+                                  </td>
                                   <td className="px-2 py-1.5 text-gray-500">{row.rowIndex}</td>
                                   {editingRowId === row.id ? (
                                     <>
@@ -671,6 +767,14 @@ export const Step2Recognize: React.FC = () => {
                                           onChange={(e) => setRowForm({ ...rowForm, projectName: e.target.value })}
                                         />
                                       </td>
+                                      <td className="px-1 py-1">
+                                        <input
+                                          type="text"
+                                          className="input text-xs py-0.5 px-1 w-full"
+                                          value={rowForm.department || ''}
+                                          onChange={(e) => setRowForm({ ...rowForm, department: e.target.value })}
+                                        />
+                                      </td>
                                       <td className="px-2 py-1.5">
                                         <span className={cn(
                                           'inline-block px-1.5 py-0.5 text-xs rounded',
@@ -704,6 +808,7 @@ export const Step2Recognize: React.FC = () => {
                                       </td>
                                       <td className="px-2 py-1.5 text-gray-600">{row.invoiceDate || '-'}</td>
                                       <td className="px-2 py-1.5 text-gray-600">{row.projectName || '-'}</td>
+                                      <td className="px-2 py-1.5 text-gray-600">{row.department || '-'}</td>
                                       <td className="px-2 py-1.5">
                                         {row.needsManual ? (
                                           <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-xs rounded bg-amber-100 text-amber-700">
@@ -745,6 +850,60 @@ export const Step2Recognize: React.FC = () => {
               )}
             </div>
           ))}
+        </div>
+      )}
+
+      {batchModalOpen && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6 mx-4">
+            <h3 className="text-lg font-semibold text-gray-800 mb-4">批量补录</h3>
+            <p className="text-sm text-gray-500 mb-4">
+              已选择 <span className="font-medium text-primary-600">{selectedRowIds.size}</span> 行，将统一填充以下字段：
+            </p>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">选择字段</label>
+                <select
+                  className="input w-full"
+                  value={batchField}
+                  onChange={(e) => setBatchField(e.target.value as any)}
+                >
+                  <option value="projectName">项目名称</option>
+                  <option value="department">所属部门</option>
+                  <option value="employeeName">员工姓名</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">填充值</label>
+                <input
+                  type="text"
+                  className="input w-full"
+                  placeholder="请输入要批量填充的值"
+                  value={batchValue}
+                  onChange={(e) => setBatchValue(e.target.value)}
+                  autoFocus
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 mt-6">
+              <button
+                className="btn btn-secondary"
+                onClick={() => {
+                  setBatchModalOpen(false);
+                  clearSelectedRows();
+                }}
+              >
+                取消
+              </button>
+              <button
+                className="btn btn-primary"
+                onClick={handleBatchSave}
+                disabled={!batchValue.trim()}
+              >
+                确认批量补录
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

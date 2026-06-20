@@ -1,6 +1,7 @@
 import type { ReimbursementFile, ExportResult, ExportSummaryItem, RollbackEntry, ClassificationRule, AmountRange, ExcelRowRecord } from '@/types';
 import { generateId, formatDate, formatAmount } from './common';
 import { getCategory, getCategoryForRow, getExpandedEntries } from './classifier';
+import { INVOICE_TYPE_LABELS } from '@/types';
 import * as XLSX from 'xlsx';
 import JSZip from 'jszip';
 
@@ -228,6 +229,68 @@ function generateIndexExcel(files: ReimbursementFile[], rule: ClassificationRule
   return new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
 }
 
+export function generateDetailListExcel(
+  files: ReimbursementFile[],
+  rule: ClassificationRule,
+  amountRanges: AmountRange[]
+): Blob {
+  const entries = getExpandedEntries(files, rule, amountRanges);
+
+  const worksheetData = [
+    ['序号', '来源文件', '行号', '员工姓名', '金额', '日期', '项目名称', '所属部门', '分类文件夹', '是否人工补录', '发票类型'],
+    ...entries.map((entry, index) => {
+      const file = entry.file;
+      const manuallySupplemented = entry.row
+        ? entry.row.manuallySupplemented
+        : !!file.manuallySupplemented;
+      const employeeName = entry.row ? entry.row.employeeName : file.invoiceInfo?.employeeName || '';
+      const amount = entry.amount;
+      const invoiceDate = entry.row ? entry.row.invoiceDate : file.invoiceInfo?.invoiceDate || '';
+      const projectName = entry.row ? entry.row.projectName : file.invoiceInfo?.projectName || '';
+      const department = entry.row ? entry.row.department : file.invoiceInfo?.department || '';
+      const invoiceType = entry.row
+        ? INVOICE_TYPE_LABELS[entry.row.invoiceType]
+        : INVOICE_TYPE_LABELS[file.invoiceInfo?.invoiceType || 'other'];
+      const rowNumber = entry.row ? `第 ${entry.row.rowIndex} 行` : '-';
+
+      return [
+        index + 1,
+        file.name,
+        rowNumber,
+        employeeName,
+        amount,
+        invoiceDate,
+        projectName,
+        department,
+        entry.category,
+        manuallySupplemented ? '是' : '否',
+        invoiceType,
+      ];
+    }),
+  ];
+
+  const ws = XLSX.utils.aoa_to_sheet(worksheetData);
+  ws['!cols'] = [
+    { wch: 8 },
+    { wch: 35 },
+    { wch: 10 },
+    { wch: 12 },
+    { wch: 12 },
+    { wch: 14 },
+    { wch: 25 },
+    { wch: 15 },
+    { wch: 25 },
+    { wch: 14 },
+    { wch: 15 },
+  ];
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, '明细清单');
+  return new Blob([XLSX.write(wb, { bookType: 'xlsx', type: 'array' })], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  });
+}
+
 export async function generateFileListZip(
   files: ReimbursementFile[],
   rule?: ClassificationRule,
@@ -261,6 +324,9 @@ export async function generateFileListZip(
     const indexBlob = generateIndexExcel(files, rule, amountRanges);
     const indexData = await indexBlob.arrayBuffer();
     zip.file('目录索引表.xlsx', indexData);
+    const detailBlob = generateDetailListExcel(files, rule, amountRanges);
+    const detailData = await detailBlob.arrayBuffer();
+    zip.file('明细清单.xlsx', detailData);
   }
 
   return await zip.generateAsync({ type: 'blob' });
