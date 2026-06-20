@@ -1,0 +1,284 @@
+import React, { useState, useEffect } from 'react';
+import {
+  Download,
+  FileText,
+  Table as TableIcon,
+  Archive,
+  RotateCcw,
+  CheckCircle2,
+  FileJson,
+  Loader2,
+  RefreshCw,
+} from 'lucide-react';
+import { useAppStore } from '@/store/useAppStore';
+import { formatAmount, cn } from '@/utils/common';
+import { generateSummaryExcel, generateIssuesExcel, generateRollbackJson, downloadBlob } from '@/utils/exporter';
+
+export const Step6Export: React.FC = () => {
+  const { files, exportResult, runExport, isProcessing, resetAll, config } = useAppStore();
+  const [exportProgress, setExportProgress] = useState(0);
+  const [isExporting, setIsExporting] = useState(false);
+
+  const totalAmount = files.reduce((sum, f) => sum + (f.invoiceInfo?.amount || 0), 0);
+  const totalIssues = files.reduce((sum, f) => sum + f.issues.length, 0);
+  const errorCount = files.reduce(
+    (sum, f) => sum + f.issues.filter((i) => i.level === 'error').length,
+    0
+  );
+
+  const categoryMap: Record<string, typeof files> = {};
+  for (const file of files) {
+    const cat = file.category || '未分类';
+    if (!categoryMap[cat]) {
+      categoryMap[cat] = [];
+    }
+    categoryMap[cat].push(file);
+  }
+
+  const handleExport = async () => {
+    setIsExporting(true);
+    setExportProgress(0);
+
+    const steps = [10, 30, 50, 70, 85, 100];
+    for (let i = 0; i < steps.length; i++) {
+      await new Promise((r) => setTimeout(r, 300));
+      setExportProgress(steps[i]);
+    }
+
+    await runExport();
+    setIsExporting(false);
+  };
+
+  const handleDownloadSummary = () => {
+    const blob = generateSummaryExcel(
+      Object.entries(categoryMap).map(([name, fileList]) => ({
+        employeeName: name,
+        fileCount: fileList.length,
+        totalAmount: fileList.reduce((s, f) => s + (f.invoiceInfo?.amount || 0), 0),
+        fileNames: fileList.map((f) => f.newName || f.name),
+      }))
+    );
+    downloadBlob(blob, '报销汇总表.xlsx');
+  };
+
+  const handleDownloadIssues = () => {
+    const blob = generateIssuesExcel(files);
+    downloadBlob(blob, '问题清单.xlsx');
+  };
+
+  const handleDownloadRollback = () => {
+    const rollbackData = files.map((f) => ({
+      id: f.id,
+      originalPath: f.relativePath,
+      originalName: f.originalName,
+      newPath: `${f.category}/${f.newName || f.name}`,
+      newName: f.newName || f.name,
+    }));
+    const blob = generateRollbackJson(rollbackData);
+    downloadBlob(blob, '回退记录.json');
+  };
+
+  const handleStartOver = () => {
+    if (window.confirm('确定要重新开始吗？所有数据将被清空。')) {
+      resetAll();
+    }
+  };
+
+  if (files.length === 0) {
+    return (
+      <div className="space-y-6 animate-fade-in">
+        <div className="text-center mb-6">
+          <h2 className="text-xl font-bold text-gray-800 mb-2">汇总导出</h2>
+          <p className="text-gray-500">生成整理结果和汇总报告</p>
+        </div>
+        <div className="text-center py-16 text-gray-400">
+          <Download size={48} className="mx-auto mb-4" />
+          <p className="text-lg">请先完成前面的步骤</p>
+          <p className="text-sm text-gray-400 mt-2">导入文件并处理后才能导出</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6 animate-fade-in">
+      <div className="text-center mb-6">
+        <h2 className="text-xl font-bold text-gray-800 mb-2">汇总导出</h2>
+        <p className="text-gray-500">生成整理结果和汇总报告</p>
+      </div>
+
+      <div className="grid grid-cols-4 gap-4 mb-6">
+        <div className="bg-white rounded-xl border border-gray-200 p-4">
+          <div className="text-3xl font-bold text-primary-600">{files.length}</div>
+          <div className="text-sm text-gray-500 mt-1">文件总数</div>
+        </div>
+        <div className="bg-white rounded-xl border border-gray-200 p-4">
+          <div className="text-3xl font-bold text-success-600">
+            ¥{formatAmount(totalAmount)}
+          </div>
+          <div className="text-sm text-gray-500 mt-1">总金额</div>
+        </div>
+        <div className="bg-white rounded-xl border border-gray-200 p-4">
+          <div className="text-3xl font-bold text-gray-700">
+            {Object.keys(categoryMap).length}
+          </div>
+          <div className="text-sm text-gray-500 mt-1">分类数</div>
+        </div>
+        <div className="bg-white rounded-xl border border-gray-200 p-4">
+          <div
+            className={cn(
+              'text-3xl font-bold',
+              errorCount > 0 ? 'text-danger-600' : 'text-success-600'
+            )}
+          >
+            {totalIssues}
+          </div>
+          <div className="text-sm text-gray-500 mt-1">问题数</div>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-xl border border-gray-200 p-6">
+        <h3 className="font-semibold text-gray-800 mb-4 flex items-center gap-2">
+          <Archive size={20} className="text-primary-500" />
+          导出内容
+        </h3>
+
+        <div className="grid grid-cols-3 gap-4 mb-6">
+          <div className="p-4 bg-gray-50 rounded-xl border border-gray-200">
+            <div className="w-12 h-12 rounded-lg bg-green-100 flex items-center justify-center mb-3">
+              <TableIcon size={24} className="text-green-600" />
+            </div>
+            <div className="font-medium text-gray-800">报销汇总表</div>
+            <div className="text-sm text-gray-500 mt-1">
+              Excel 格式，包含各分类的文件和金额统计
+            </div>
+          </div>
+
+          <div className="p-4 bg-gray-50 rounded-xl border border-gray-200">
+            <div className="w-12 h-12 rounded-lg bg-orange-100 flex items-center justify-center mb-3">
+              <FileText size={24} className="text-orange-600" />
+            </div>
+            <div className="font-medium text-gray-800">问题清单</div>
+            <div className="text-sm text-gray-500 mt-1">
+              Excel 格式，列出所有检测到的问题和建议
+            </div>
+          </div>
+
+          <div className="p-4 bg-gray-50 rounded-xl border border-gray-200">
+            <div className="w-12 h-12 rounded-lg bg-blue-100 flex items-center justify-center mb-3">
+              <FileJson size={24} className="text-blue-600" />
+            </div>
+            <div className="font-medium text-gray-800">回退记录</div>
+            <div className="text-sm text-gray-500 mt-1">
+              JSON 格式，记录原始路径和新路径的映射
+            </div>
+          </div>
+        </div>
+
+        {isExporting && (
+          <div className="mb-6">
+            <div className="flex justify-between text-sm text-gray-600 mb-2">
+              <span>正在导出...</span>
+              <span>{exportProgress}%</span>
+            </div>
+            <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-primary-500 rounded-full transition-all duration-300"
+                style={{ width: `${exportProgress}%` }}
+              />
+            </div>
+          </div>
+        )}
+
+        {exportResult && !isExporting ? (
+          <div className="bg-success-50 border border-success-200 rounded-xl p-4 mb-4">
+            <div className="flex items-center gap-3">
+              <CheckCircle2 size={24} className="text-success-600" />
+              <div>
+                <div className="font-medium text-success-800">导出成功！</div>
+                <div className="text-sm text-success-600">
+                  文件已下载到本地，请检查下载文件夹
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        <div className="flex items-center justify-center gap-3">
+          <button
+            className="btn btn-primary px-8 py-3 text-base"
+            onClick={handleExport}
+            disabled={isExporting || isProcessing}
+          >
+            {isExporting ? (
+              <>
+                <Loader2 size={20} className="animate-spin" />
+                导出中...
+              </>
+            ) : (
+              <>
+                <Download size={20} />
+                开始导出
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-xl border border-gray-200 p-6">
+        <h3 className="font-semibold text-gray-800 mb-4">分类预览</h3>
+        <div className="space-y-2 max-h-60 overflow-y-auto">
+          {Object.entries(categoryMap).map(([category, catFiles]) => {
+            const catAmount = catFiles.reduce(
+              (s, f) => s + (f.invoiceInfo?.amount || 0),
+              0
+            );
+            return (
+              <div
+                key={category}
+                className="flex items-center justify-between p-3 bg-gray-50 rounded-lg"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded bg-primary-100 flex items-center justify-center">
+                    <FileText size={16} className="text-primary-600" />
+                  </div>
+                  <span className="font-medium text-gray-800">{category}</span>
+                  <span className="text-sm text-gray-500">{catFiles.length} 个文件</span>
+                </div>
+                <span className="font-semibold text-primary-600">
+                  ¥{formatAmount(catAmount)}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="flex items-center justify-between pt-4">
+        <button
+          className="btn btn-secondary"
+          onClick={handleStartOver}
+        >
+          <RotateCcw size={18} />
+          重新开始
+        </button>
+        <div className="flex gap-2">
+          <button className="btn btn-secondary text-sm" onClick={handleDownloadSummary}>
+            <TableIcon size={16} />
+            下载汇总表
+          </button>
+          <button className="btn btn-secondary text-sm" onClick={handleDownloadIssues}>
+            <FileText size={16} />
+            下载问题清单
+          </button>
+          <button className="btn btn-secondary text-sm" onClick={handleDownloadRollback}>
+            <FileJson size={16} />
+            下载回退记录
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default Step6Export;
