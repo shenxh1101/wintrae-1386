@@ -2,7 +2,10 @@ import type { ReimbursementFile, Issue, CheckRules, IssueType } from '@/types';
 import { generateId, getFileNameWithoutExtension } from './common';
 
 export function runAllChecks(files: ReimbursementFile[], rules: CheckRules): ReimbursementFile[] {
-  let result = files.map(f => ({ ...f, issues: [] }));
+  let result = files.map(f => {
+    const preservedIssues = f.issues.filter(i => i.type === 'unrecognized');
+    return { ...f, issues: preservedIssues };
+  });
 
   if (rules.checkDuplicate) {
     result = checkDuplicates(result);

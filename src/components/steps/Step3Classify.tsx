@@ -6,10 +6,12 @@ import {
   FolderKanban,
   Layers,
   FileText,
+  Table2,
 } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 import { CLASSIFICATION_RULE_LABELS, type ClassificationRule } from '@/types';
 import { formatAmount, cn } from '@/utils/common';
+import { getExpandedEntries } from '@/utils/classifier';
 
 const ruleOptions: { value: ClassificationRule; icon: React.ReactNode; label: string; desc: string }[] = [
   {
@@ -41,18 +43,26 @@ const ruleOptions: { value: ClassificationRule; icon: React.ReactNode; label: st
 export const Step3Classify: React.FC = () => {
   const { files, config, updateClassificationRule } = useAppStore();
 
-  const categoryMap: Record<string, typeof files> = {};
-  for (const file of files) {
-    const cat = file.category || '未分类';
-    if (!categoryMap[cat]) {
-      categoryMap[cat] = [];
+  const expandedEntries = getExpandedEntries(files, config.classificationRule, config.amountRanges);
+
+  const categoryAgg = new Map<string, { count: number; totalAmount: number; labels: string[] }>();
+  for (const entry of expandedEntries) {
+    if (!categoryAgg.has(entry.category)) {
+      categoryAgg.set(entry.category, { count: 0, totalAmount: 0, labels: [] });
     }
-    categoryMap[cat].push(file);
+    const agg = categoryAgg.get(entry.category)!;
+    agg.count++;
+    agg.totalAmount += entry.amount;
+    agg.labels.push(entry.label);
   }
 
-  const categories = Object.entries(categoryMap).sort((a, b) => b[1].length - a[1].length);
+  const categories = Array.from(categoryAgg.entries()).sort((a, b) => b[1].count - a[1].count);
 
   const hasRecognitionData = files.some((f) => f.invoiceInfo);
+
+  const totalAmount = expandedEntries.reduce((sum, e) => sum + e.amount, 0);
+  const totalEntries = expandedEntries.length;
+  const subRowCount = expandedEntries.filter(e => e.source === 'row').length;
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -102,12 +112,7 @@ export const Step3Classify: React.FC = () => {
         </div>
       ) : (
         <div className="space-y-4 max-h-[400px] overflow-y-auto p-1">
-          {categories.map(([category, catFiles]) => {
-            const totalAmount = catFiles.reduce(
-              (sum, f) => sum + (f.invoiceInfo?.amount || 0),
-              0
-            );
-
+          {categories.map(([category, agg]) => {
             return (
               <div
                 key={category}
@@ -121,31 +126,31 @@ export const Step3Classify: React.FC = () => {
                     <div>
                       <div className="font-semibold text-gray-800">{category}</div>
                       <div className="text-xs text-gray-500">
-                        {catFiles.length} 个文件
+                        {agg.count} 条记录
                       </div>
                     </div>
                   </div>
                   <div className="text-right">
                     <div className="text-lg font-bold text-primary-600">
-                      ¥{formatAmount(totalAmount)}
+                      ¥{formatAmount(agg.totalAmount)}
                     </div>
                     <div className="text-xs text-gray-500">总金额</div>
                   </div>
                 </div>
 
                 <div className="flex flex-wrap gap-1.5">
-                  {catFiles.slice(0, 6).map((file) => (
+                  {agg.labels.slice(0, 6).map((label, i) => (
                     <div
-                      key={file.id}
+                      key={i}
                       className="px-2 py-1 bg-gray-100 rounded text-xs text-gray-600 truncate max-w-[150px]"
-                      title={file.name}
+                      title={label}
                     >
-                      {file.name}
+                      {label}
                     </div>
                   ))}
-                  {catFiles.length > 6 && (
+                  {agg.labels.length > 6 && (
                     <div className="px-2 py-1 bg-gray-100 rounded text-xs text-gray-500">
-                      +{catFiles.length - 6} 更多
+                      +{agg.labels.length - 6} 更多
                     </div>
                   )}
                 </div>
@@ -159,12 +164,15 @@ export const Step3Classify: React.FC = () => {
         <div className="bg-gray-50 rounded-xl p-4 flex items-center justify-between">
           <span className="text-sm text-gray-600">
             共 <span className="font-medium text-gray-800">{categories.length}</span> 个分类，
-            <span className="font-medium text-gray-800">{files.length}</span> 个文件
+            <span className="font-medium text-gray-800">{totalEntries}</span> 条记录
+            {subRowCount > 0 && (
+              <span className="text-primary-500 ml-1">
+                （含 <Table2 size={12} className="inline" /> {subRowCount} 条表格子行）
+              </span>
+            )}
           </span>
           <span className="text-sm text-primary-600 font-medium">
-            总计 ¥{formatAmount(
-              files.reduce((sum, f) => sum + (f.invoiceInfo?.amount || 0), 0)
-            )}
+            总计 ¥{formatAmount(totalAmount)}
           </span>
         </div>
       )}

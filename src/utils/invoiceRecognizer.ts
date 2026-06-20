@@ -1,6 +1,6 @@
-import type { ReimbursementFile, InvoiceType, InvoiceInfo } from '@/types';
+import type { ReimbursementFile, InvoiceType, InvoiceInfo, RecognitionSource, ExcelRowRecord } from '@/types';
 import { generateId, getFileNameWithoutExtension } from './common';
-import { extractInfoFromFilename, readExcelFile, extractFromExcelData, readPdfText } from './fileProcessor';
+import { extractInfoFromFilename, readExcelFile, extractFromExcelData, extractAllRowsFromExcel, readPdfText } from './fileProcessor';
 
 const INVOICE_KEYWORDS: Record<InvoiceType, string[]> = {
   vat_special: ['增值税专用发票', '专用发票', '专票', 'vat special'],
@@ -78,11 +78,13 @@ export function extractInvoiceInfoFromFile(file: ReimbursementFile): Partial<Inv
 export async function recognizeInvoice(file: ReimbursementFile): Promise<{
   info: InvoiceInfo;
   needsManual: boolean;
-  recognitionSource: 'filename' | 'excel' | 'pdf' | 'image' | 'none';
+  recognitionSource: RecognitionSource;
+  excelSubRows?: ExcelRowRecord[];
 }> {
   const basicInfo = extractInvoiceInfoFromFile(file);
   let contentInfo: Partial<InvoiceInfo> = {};
-  let source: 'filename' | 'excel' | 'pdf' | 'image' | 'none' = 'filename';
+  let source: RecognitionSource = 'filename';
+  let excelSubRows: ExcelRowRecord[] | undefined;
 
   if (file.rawFile) {
     if (file.type === 'excel') {
@@ -90,6 +92,7 @@ export async function recognizeInvoice(file: ReimbursementFile): Promise<{
         const rows = await readExcelFile(file.rawFile);
         if (rows && rows.length > 0) {
           contentInfo = extractFromExcelData(rows);
+          excelSubRows = extractAllRowsFromExcel(rows);
           source = 'excel';
         }
       } catch (e) {
@@ -132,6 +135,7 @@ export async function recognizeInvoice(file: ReimbursementFile): Promise<{
     info: finalInfo,
     needsManual,
     recognitionSource: source,
+    excelSubRows,
   };
 }
 
@@ -182,6 +186,11 @@ export function processInvoiceRecognition(files: ReimbursementFile[]): Reimburse
       projectName: basic.projectName || '',
       department: basic.department || '',
     };
+
+    let source: RecognitionSource = 'filename';
+    if (file.type === 'excel') source = 'excel';
+    else if (file.type === 'image') source = 'image';
+    else if (file.type === 'pdf') source = 'filename';
 
     const existingUnrecognized = file.issues.filter(i => i.type === 'unrecognized');
 
@@ -234,6 +243,8 @@ export function processInvoiceRecognition(files: ReimbursementFile[]): Reimburse
       ...file,
       invoiceInfo: info,
       issues,
+      recognitionSource: source,
+      excelSubRows: file.excelSubRows,
     };
   });
 }
@@ -277,6 +288,34 @@ export function updateInvoiceInfo(fileId: string, files: ReimbursementFile[], up
       ...file,
       invoiceInfo: updatedInfo,
       issues: newIssues,
+      manuallySupplemented: true,
+      recognitionSource: 'manual' as RecognitionSource,
+    };
+  });
+}
+
+export function updateExcelRowInfo(
+  fileId: string,
+  rowId: string,
+  files: ReimbursementFile[],
+  updates: Partial<ExcelRowRecord>
+): ReimbursementFile[] {
+  return files.map(file => {
+    if (file.id !== fileId || !file.excelSubRows) return file;
+
+    const updatedRows = file.excelSubRows.map(row => {
+      if (row.id !== rowId) return row;
+      const updated = { ...row, ...updates, manuallySupplemented: true };
+      const isRowComplete = updated.employeeName && (updated.invoiceType === 'approval' || updated.amount > 0);
+      return { ...updated, needsManual: !isRowComplete };
+    });
+
+    const hasAnyManualRow = updatedRows.some(r => r.manuallySupplemented);
+
+    return {
+      ...file,
+      excelSubRows: updatedRows,
+      manuallySupplemented: hasAnyManualRow || !!file.manuallySupplemented,
     };
   });
 }

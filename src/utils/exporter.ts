@@ -1,6 +1,6 @@
-import type { ReimbursementFile, ExportResult, ExportSummaryItem, RollbackEntry, ClassificationRule, AmountRange } from '@/types';
+import type { ReimbursementFile, ExportResult, ExportSummaryItem, RollbackEntry, ClassificationRule, AmountRange, ExcelRowRecord } from '@/types';
 import { generateId, formatDate, formatAmount } from './common';
-import { getCategory } from './classifier';
+import { getCategory, getCategoryForRow, getExpandedEntries } from './classifier';
 import * as XLSX from 'xlsx';
 import JSZip from 'jszip';
 
@@ -12,24 +12,41 @@ export async function generateExportData(
   summaryData: ExportSummaryItem[];
   rollbackLog: RollbackEntry[];
 }> {
-  const categoryMap = new Map<string, ReimbursementFile[]>();
+  const categoryMap = new Map<string, { files: ReimbursementFile[]; totalAmount: number; fileNames: string[] }>();
 
   for (const file of files) {
-    const category = getCategory(file, rule, amountRanges);
-    if (!categoryMap.has(category)) {
-      categoryMap.set(category, []);
+    if (file.excelSubRows && file.excelSubRows.length > 0) {
+      for (const row of file.excelSubRows) {
+        const category = getCategoryForRow(row, rule, amountRanges);
+        if (!categoryMap.has(category)) {
+          categoryMap.set(category, { files: [], totalAmount: 0, fileNames: [] });
+        }
+        const entry = categoryMap.get(category)!;
+        entry.totalAmount += row.amount;
+        entry.fileNames.push(`${file.name}(第${row.rowIndex}行:${row.employeeName || '未知'})`);
+        if (!entry.files.includes(file)) {
+          entry.files.push(file);
+        }
+      }
+    } else {
+      const category = getCategory(file, rule, amountRanges);
+      if (!categoryMap.has(category)) {
+        categoryMap.set(category, { files: [], totalAmount: 0, fileNames: [] });
+      }
+      const entry = categoryMap.get(category)!;
+      entry.files.push(file);
+      entry.totalAmount += file.invoiceInfo?.amount || 0;
+      entry.fileNames.push(file.newName || file.name);
     }
-    categoryMap.get(category)!.push(file);
   }
 
   const summaryData: ExportSummaryItem[] = [];
-  for (const [category, catFiles] of categoryMap) {
-    const totalAmount = catFiles.reduce((sum, f) => sum + (f.invoiceInfo?.amount || 0), 0);
+  for (const [category, data] of categoryMap) {
     summaryData.push({
       employeeName: category,
-      fileCount: catFiles.length,
-      totalAmount,
-      fileNames: catFiles.map(f => f.newName || f.name),
+      fileCount: data.fileNames.length,
+      totalAmount: data.totalAmount,
+      fileNames: data.fileNames,
     });
   }
 
@@ -48,7 +65,7 @@ export async function generateExportData(
 
 export function generateSummaryExcel(summaryData: ExportSummaryItem[]): Blob {
   const worksheetData = [
-    ['序号', '分类', '文件数量', '总金额（元）', '包含文件'],
+    ['序号', '分类', '条目数量', '总金额（元）', '包含文件'],
     ...summaryData.map((item, index) => [
       index + 1,
       item.employeeName,
@@ -97,7 +114,7 @@ export function generateIssuesExcel(files: ReimbursementFile[]): Blob {
     amount_mismatch: '金额不一致',
     missing_approval: '缺少审批单',
     naming_issue: '命名不规范',
-    unrecognized: '无法识别',
+    unrecognized: '待人工补录',
   };
 
   const worksheetData = [
@@ -138,10 +155,87 @@ export function generateRollbackJson(rollbackLog: RollbackEntry[]): Blob {
   return new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
 }
 
-export async function generateFileListZip(files: ReimbursementFile[]): Promise<Blob> {
+function generateIndexExcel(files: ReimbursementFile[], rule: ClassificationRule, amountRanges: AmountRange[]): Blob {
+  const sourceLabels: Record<string, string> = {
+    filename: '文件名识别',
+    excel: '表格内容识别',
+    pdf: 'PDF识别',
+    image: '图片识别',
+    manual: '人工补录',
+    none: '未识别',
+  };
+
+  const rows: any[][] = [
+    ['序号', '新文件名', '分类文件夹', '来源原路径', '识别来源', '是否人工补录', '员工姓名', '金额（元）', '日期', '项目名称'],
+  ];
+
+  let index = 0;
+  for (const file of files) {
+    if (file.excelSubRows && file.excelSubRows.length > 0) {
+      for (const row of file.excelSubRows) {
+        index++;
+        const category = getCategoryForRow(row, rule, amountRanges);
+        rows.push([
+          index,
+          `${file.name}(第${row.rowIndex}行)`,
+          category,
+          file.relativePath,
+          sourceLabels[file.recognitionSource || 'none'],
+          row.manuallySupplemented ? '是' : '否',
+          row.employeeName,
+          row.amount,
+          row.invoiceDate,
+          row.projectName,
+        ]);
+      }
+    } else {
+      index++;
+      rows.push([
+        index,
+        file.newName || file.name,
+        file.category || '未分类',
+        file.relativePath,
+        sourceLabels[file.recognitionSource || 'none'],
+        file.manuallySupplemented ? '是' : '否',
+        file.invoiceInfo?.employeeName || '',
+        file.invoiceInfo?.amount || 0,
+        file.invoiceInfo?.invoiceDate || '',
+        file.invoiceInfo?.projectName || '',
+      ]);
+    }
+  }
+
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  ws['!cols'] = [
+    { wch: 8 },
+    { wch: 30 },
+    { wch: 15 },
+    { wch: 40 },
+    { wch: 15 },
+    { wch: 12 },
+    { wch: 12 },
+    { wch: 12 },
+    { wch: 12 },
+    { wch: 15 },
+  ];
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, '目录索引');
+
+  const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+  return new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+}
+
+export async function generateFileListZip(
+  files: ReimbursementFile[],
+  rule?: ClassificationRule,
+  amountRanges?: AmountRange[]
+): Promise<Blob> {
   const zip = new JSZip();
 
   const folderMap = new Map<string, JSZip>();
+
+  const addedRawFiles = new WeakSet<File>();
 
   for (const file of files) {
     const category = file.category || '未分类';
@@ -153,11 +247,18 @@ export async function generateFileListZip(files: ReimbursementFile[]): Promise<B
       folderMap.set(category, folder!);
     }
 
-    if (file.rawFile) {
+    if (file.rawFile && !addedRawFiles.has(file.rawFile)) {
       folder!.file(newName, file.rawFile);
-    } else {
+      addedRawFiles.add(file.rawFile);
+    } else if (!file.rawFile) {
       folder!.file(newName, new ArrayBuffer(0));
     }
+  }
+
+  if (rule && amountRanges) {
+    const indexBlob = generateIndexExcel(files, rule, amountRanges);
+    const indexData = await indexBlob.arrayBuffer();
+    zip.file('目录索引表.xlsx', indexData);
   }
 
   return await zip.generateAsync({ type: 'blob' });
@@ -189,7 +290,7 @@ export async function runExport(
   const summaryBlob = generateSummaryExcel(summaryData);
   const issuesBlob = generateIssuesExcel(files);
   const rollbackBlob = generateRollbackJson(rollbackLog);
-  const zipBlob = await generateFileListZip(files);
+  const zipBlob = await generateFileListZip(files, rule, amountRanges);
 
   downloadBlob(summaryBlob, `报销汇总表_${dateStr}.xlsx`);
   await new Promise(r => setTimeout(r, 200));

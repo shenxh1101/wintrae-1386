@@ -1,4 +1,4 @@
-import type { FileType, ReimbursementFile, InvoiceInfo, InvoiceType } from '@/types';
+import type { FileType, ReimbursementFile, InvoiceInfo, InvoiceType, ExcelRowRecord } from '@/types';
 import { generateId, getFileExtension, getFileNameWithoutExtension } from './common';
 
 const IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'tiff'];
@@ -70,6 +70,7 @@ interface MockFileData {
   hasExcelContent?: boolean;
   isUnrecognizable?: boolean;
   invoiceNumber?: string;
+  excelSubRows?: ExcelRowRecord[];
 }
 
 export function createMockFiles(): ReimbursementFile[] {
@@ -163,7 +164,14 @@ export function createMockFiles(): ReimbursementFile[] {
       name: '部门消费记录.csv',
       relativePath: '2024年1月报销/汇总/部门消费记录.csv',
       type: 'excel', size: 5600, amount: 0, employee: '',
-      date: '', invoiceType: 'other', hasExcelContent: true
+      date: '', invoiceType: 'other', hasExcelContent: true,
+      excelSubRows: [
+        { id: generateId(), rowIndex: 2, employeeName: '张三', amount: 450.00, invoiceDate: '2024-01-10', projectName: '研发项目', department: '技术部', invoiceType: 'receipt', invoiceNumber: 'SK20240110101', needsManual: false, manuallySupplemented: false },
+        { id: generateId(), rowIndex: 3, employeeName: '李四', amount: 780.00, invoiceDate: '2024-01-11', projectName: '市场推广项目', department: '市场部', invoiceType: 'vat_general', invoiceNumber: 'INV20240111099', needsManual: false, manuallySupplemented: false },
+        { id: generateId(), rowIndex: 4, employeeName: '王五', amount: 320.00, invoiceDate: '2024-01-12', projectName: '产品运营', department: '产品部', invoiceType: 'receipt', invoiceNumber: 'SK20240112077', needsManual: false, manuallySupplemented: false },
+        { id: generateId(), rowIndex: 5, employeeName: '赵六', amount: 1250.00, invoiceDate: '2024-01-13', projectName: '市场推广项目', department: '市场部', invoiceType: 'vat_special', invoiceNumber: 'ZZ20240113055', needsManual: false, manuallySupplemented: false },
+        { id: generateId(), rowIndex: 6, employeeName: '', amount: 0, invoiceDate: '', projectName: '', department: '', invoiceType: 'other', invoiceNumber: '', needsManual: true, manuallySupplemented: false },
+      ],
     },
   ];
 
@@ -215,6 +223,7 @@ export function createMockFiles(): ReimbursementFile[] {
           : item.relativePath.includes('市场部') ? '市场部'
           : item.relativePath.includes('产品部') ? '产品部' : '未知',
       },
+      excelSubRows: item.excelSubRows,
     };
 
     issues.forEach(i => i.fileId = file.id);
@@ -268,7 +277,6 @@ export function extractFromExcelData(rows: Record<string, any>[]): Partial<Invoi
   if (!rows || rows.length === 0) return {};
   const result: Partial<InvoiceInfo> = {};
   const firstRow = rows[0];
-  const allKeys = Object.keys(firstRow).map(k => k.toLowerCase());
 
   const findValue = (keywords: string[]): any => {
     for (const key of Object.keys(firstRow)) {
@@ -319,6 +327,78 @@ export function extractFromExcelData(rows: Record<string, any>[]): Partial<Invoi
   }
 
   return result;
+}
+
+export function extractAllRowsFromExcel(rows: Record<string, any>[]): ExcelRowRecord[] {
+  if (!rows || rows.length === 0) return [];
+
+  const findColValue = (row: Record<string, any>, keywords: string[]): any => {
+    for (const key of Object.keys(row)) {
+      const lowerKey = key.toLowerCase();
+      if (keywords.some(kw => lowerKey.includes(kw))) {
+        return row[key];
+      }
+    }
+    return undefined;
+  };
+
+  const parseDate = (val: any): string => {
+    if (!val) return '';
+    const d = new Date(val);
+    if (!isNaN(d.getTime())) return d.toISOString().split('T')[0];
+    if (typeof val === 'string') return val;
+    return '';
+  };
+
+  const parseAmount = (val: any): number => {
+    if (val === undefined || val === null) return 0;
+    const n = parseFloat(String(val));
+    return isNaN(n) ? 0 : n;
+  };
+
+  const parseString = (val: any): string => {
+    if (!val) return '';
+    return String(val).trim();
+  };
+
+  const detectType = (row: Record<string, any>): InvoiceType => {
+    const typeVal = findColValue(row, ['发票类型', '类型', 'type']);
+    if (typeVal) {
+      const s = String(typeVal);
+      if (s.includes('专票') || s.includes('专用')) return 'vat_special';
+      if (s.includes('普票') || s.includes('普通')) return 'vat_general';
+      if (s.includes('电子')) return 'electronic';
+      if (s.includes('收据') || s.includes('小票')) return 'receipt';
+      if (s.includes('审批') || s.includes('申请')) return 'approval';
+    }
+    return 'other';
+  };
+
+  return rows.map((row, index) => {
+    const employeeName = parseString(findColValue(row, ['姓名', '员工', '报销人', 'name', 'employee']));
+    const amount = parseAmount(findColValue(row, ['金额', '费用', '合计', '总价', 'amount', 'price', 'total']));
+    const invoiceDate = parseDate(findColValue(row, ['日期', '时间', 'date', 'time']));
+    const projectName = parseString(findColValue(row, ['项目', 'project', '用途', '科目']));
+    const department = parseString(findColValue(row, ['部门', 'department', 'dept']));
+    const invoiceType = detectType(row);
+    const invoiceNumber = parseString(findColValue(row, ['发票号', '票据号', '单号', '号码', 'invoice', 'no']));
+
+    const needsManual = !employeeName || (invoiceType !== 'approval' && amount <= 0);
+
+    return {
+      id: generateId(),
+      rowIndex: index + 2,
+      employeeName,
+      amount,
+      invoiceDate,
+      projectName,
+      department,
+      invoiceType,
+      invoiceNumber,
+      needsManual,
+      manuallySupplemented: false,
+    };
+  });
 }
 
 export async function readPdfText(file: File): Promise<string | null> {

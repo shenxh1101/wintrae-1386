@@ -5,6 +5,7 @@ import type {
   ExportResult,
   ClassificationRule,
   Issue,
+  ExcelRowRecord,
 } from '@/types';
 import {
   DEFAULT_NAMING_TEMPLATE,
@@ -13,7 +14,7 @@ import {
   classifyFiles,
 } from '@/utils/classifier';
 import { DEFAULT_CHECK_RULES, runAllChecks } from '@/utils/checker';
-import { processInvoiceRecognition } from '@/utils/invoiceRecognizer';
+import { processInvoiceRecognition, updateInvoiceInfo, updateExcelRowInfo } from '@/utils/invoiceRecognizer';
 import { runExport } from '@/utils/exporter';
 import { createMockFiles } from '@/utils/fileProcessor';
 
@@ -38,6 +39,7 @@ interface AppState {
 
   runRecognition: () => void;
   updateInvoiceInfo: (fileId: string, updates: Partial<ReimbursementFile['invoiceInfo']>) => void;
+  updateExcelRow: (fileId: string, rowId: string, updates: Partial<ExcelRowRecord>) => void;
 
   updateClassificationRule: (rule: ClassificationRule) => void;
 
@@ -127,24 +129,13 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   updateInvoiceInfo: (fileId: string, updates: Partial<ReimbursementFile['invoiceInfo']>) =>
     set((state) => ({
-      files: state.files.map((f) => {
-        if (f.id !== fileId) return f;
-        return {
-          ...f,
-          invoiceInfo: f.invoiceInfo
-            ? { ...f.invoiceInfo, ...updates }
-            : {
-                invoiceType: 'other',
-                invoiceNumber: '',
-                amount: 0,
-                invoiceDate: '',
-                employeeName: '',
-                projectName: '',
-                department: '',
-                ...updates,
-              },
-        };
-      }),
+      files: updateInvoiceInfo(fileId, state.files, updates),
+      checksCompleted: false,
+    })),
+
+  updateExcelRow: (fileId: string, rowId: string, updates: Partial<ExcelRowRecord>) =>
+    set((state) => ({
+      files: updateExcelRowInfo(fileId, rowId, state.files, updates),
       checksCompleted: false,
     })),
 

@@ -20,6 +20,22 @@ export type IssueType =
 
 export type ClassificationRule = 'employee' | 'month' | 'amount' | 'project';
 
+export type RecognitionSource = 'filename' | 'excel' | 'pdf' | 'image' | 'manual' | 'none';
+
+export interface ExcelRowRecord {
+  id: string;
+  rowIndex: number;
+  employeeName: string;
+  amount: number;
+  invoiceDate: string;
+  projectName: string;
+  department: string;
+  invoiceType: InvoiceType;
+  invoiceNumber: string;
+  needsManual: boolean;
+  manuallySupplemented: boolean;
+}
+
 export interface InvoiceInfo {
   invoiceType: InvoiceType;
   invoiceNumber: string;
@@ -55,6 +71,9 @@ export interface ReimbursementFile {
   category: string;
   isSelected: boolean;
   rawFile?: File;
+  recognitionSource?: RecognitionSource;
+  manuallySupplemented?: boolean;
+  excelSubRows?: ExcelRowRecord[];
 }
 
 export interface AmountRange {

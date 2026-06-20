@@ -79,7 +79,7 @@ export const Step6Export: React.FC = () => {
   };
 
   const handleDownloadZip = async () => {
-    const blob = await generateFileListZip(files);
+    const blob = await generateFileListZip(files, config.classificationRule, config.amountRanges);
     const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
     downloadBlob(blob, `规范附件目录_${dateStr}.zip`);
   };

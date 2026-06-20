@@ -11,17 +11,58 @@ import {
   DollarSign,
   Hash,
   Building2,
+  AlertTriangle,
+  ChevronDown,
+  ChevronUp,
+  Save,
+  Table2,
+  ClipboardEdit,
 } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
-import { FileCard } from '@/components/FileCard';
 import { INVOICE_TYPE_LABELS } from '@/types';
 import { formatAmount, cn } from '@/utils/common';
 
+const SOURCE_LABELS: Record<string, string> = {
+  filename: '文件名识别',
+  excel: '表格识别',
+  pdf: 'PDF识别',
+  image: '图片识别',
+  manual: '人工补录',
+  none: '未识别',
+};
+
+const SOURCE_COLORS: Record<string, string> = {
+  filename: 'bg-sky-100 text-sky-700',
+  excel: 'bg-emerald-100 text-emerald-700',
+  pdf: 'bg-rose-100 text-rose-700',
+  image: 'bg-violet-100 text-violet-700',
+  manual: 'bg-amber-100 text-amber-700',
+  none: 'bg-gray-100 text-gray-500',
+};
+
+function RecognitionSourceBadge({ source }: { source?: string }) {
+  if (!source) return null;
+  return (
+    <span className={cn('inline-block px-2 py-0.5 text-xs rounded-full font-medium', SOURCE_COLORS[source])}>
+      {SOURCE_LABELS[source] || source}
+    </span>
+  );
+}
+
 export const Step2Recognize: React.FC = () => {
-  const { files, runRecognition, updateInvoiceInfo, isProcessing } = useAppStore();
+  const { files, runRecognition, updateInvoiceInfo, updateExcelRow, isProcessing, recognitionCompleted } = useAppStore();
+
   const [editingFileId, setEditingFileId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<Record<string, string | number>>({});
 
+  const [manualForms, setManualForms] = useState<Record<string, { employeeName: string; amount: string; invoiceDate: string; projectName: string }>>({});
+
+  const [editingRowId, setEditingRowId] = useState<string | null>(null);
+  const [rowForm, setRowForm] = useState<Record<string, string>>({});
+
+  const [expandedFiles, setExpandedFiles] = useState<Set<string>>(new Set());
+
+  const manualQueueFiles = files.filter((f) => f.issues.some((i) => i.type === 'unrecognized'));
   const recognizedCount = files.filter((f) => f.invoiceInfo).length;
   const unrecognizedCount = files.filter(
     (f) => !f.invoiceInfo || f.invoiceInfo.employeeName === ''
@@ -29,6 +70,72 @@ export const Step2Recognize: React.FC = () => {
 
   const handleStartRecognition = () => {
     runRecognition();
+  };
+
+  const getManualForm = (fileId: string) => {
+    if (manualForms[fileId]) return manualForms[fileId];
+    const file = files.find((f) => f.id === fileId);
+    return {
+      employeeName: file?.invoiceInfo?.employeeName || '',
+      amount: String(file?.invoiceInfo?.amount || ''),
+      invoiceDate: file?.invoiceInfo?.invoiceDate || '',
+      projectName: file?.invoiceInfo?.projectName || '',
+    };
+  };
+
+  const handleManualFormChange = (fileId: string, field: string, value: string) => {
+    setManualForms((prev) => ({
+      ...prev,
+      [fileId]: { ...getManualForm(fileId), [field]: value },
+    }));
+  };
+
+  const handleManualSave = (fileId: string) => {
+    const form = getManualForm(fileId);
+    updateInvoiceInfo(fileId, {
+      employeeName: form.employeeName,
+      amount: Number(form.amount) || 0,
+      invoiceDate: form.invoiceDate,
+      projectName: form.projectName,
+    });
+    setManualForms((prev) => {
+      const next = { ...prev };
+      delete next[fileId];
+      return next;
+    });
+  };
+
+  const toggleExpanded = (fileId: string) => {
+    setExpandedFiles((prev) => {
+      const next = new Set(prev);
+      if (next.has(fileId)) {
+        next.delete(fileId);
+      } else {
+        next.add(fileId);
+      }
+      return next;
+    });
+  };
+
+  const handleRowEdit = (row: { id: string; employeeName: string; amount: number; invoiceDate: string; projectName: string }) => {
+    setEditingRowId(row.id);
+    setRowForm({
+      employeeName: row.employeeName,
+      amount: String(row.amount),
+      invoiceDate: row.invoiceDate,
+      projectName: row.projectName,
+    });
+  };
+
+  const handleRowSave = (fileId: string, rowId: string) => {
+    updateExcelRow(fileId, rowId, {
+      employeeName: rowForm.employeeName,
+      amount: Number(rowForm.amount) || 0,
+      invoiceDate: rowForm.invoiceDate,
+      projectName: rowForm.projectName,
+    });
+    setEditingRowId(null);
+    setRowForm({});
   };
 
   const handleEdit = (fileId: string) => {
@@ -71,6 +178,89 @@ export const Step2Recognize: React.FC = () => {
         <p className="text-gray-500">自动识别发票类型、金额、员工等关键信息</p>
       </div>
 
+      {manualQueueFiles.length > 0 && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <ClipboardEdit size={18} className="text-amber-600" />
+            <h3 className="font-semibold text-amber-800">待人工补录队列</h3>
+            <span className="ml-auto px-2.5 py-0.5 bg-amber-200 text-amber-800 text-xs font-bold rounded-full">
+              {manualQueueFiles.length} 项待补录
+            </span>
+          </div>
+
+          <div className="space-y-3">
+            {manualQueueFiles.map((file) => {
+              const form = getManualForm(file.id);
+              return (
+                <div
+                  key={file.id}
+                  className="bg-white border border-amber-200 rounded-lg p-3"
+                >
+                  <div className="flex items-center gap-2 mb-2">
+                    <AlertTriangle size={14} className="text-amber-500 flex-shrink-0" />
+                    <span className="text-sm font-medium text-gray-800 truncate">{file.name}</span>
+                    <RecognitionSourceBadge source={file.recognitionSource} />
+                    <span className="text-xs text-amber-600 truncate flex-shrink-0">
+                      {file.issues.find((i) => i.type === 'unrecognized')?.description}
+                    </span>
+                  </div>
+
+                  <div className="flex items-end gap-2 flex-wrap">
+                    <div className="flex-1 min-w-[120px]">
+                      <label className="text-xs text-gray-500 mb-0.5 block">姓名</label>
+                      <input
+                        type="text"
+                        className="input text-sm py-1"
+                        placeholder="员工姓名"
+                        value={form.employeeName}
+                        onChange={(e) => handleManualFormChange(file.id, 'employeeName', e.target.value)}
+                      />
+                    </div>
+                    <div className="flex-1 min-w-[100px]">
+                      <label className="text-xs text-gray-500 mb-0.5 block">金额</label>
+                      <input
+                        type="number"
+                        className="input text-sm py-1"
+                        placeholder="0.00"
+                        value={form.amount}
+                        onChange={(e) => handleManualFormChange(file.id, 'amount', e.target.value)}
+                      />
+                    </div>
+                    <div className="flex-1 min-w-[130px]">
+                      <label className="text-xs text-gray-500 mb-0.5 block">日期</label>
+                      <input
+                        type="date"
+                        className="input text-sm py-1"
+                        value={form.invoiceDate}
+                        onChange={(e) => handleManualFormChange(file.id, 'invoiceDate', e.target.value)}
+                      />
+                    </div>
+                    <div className="flex-1 min-w-[120px]">
+                      <label className="text-xs text-gray-500 mb-0.5 block">项目</label>
+                      <input
+                        type="text"
+                        className="input text-sm py-1"
+                        placeholder="项目名称"
+                        value={form.projectName}
+                        onChange={(e) => handleManualFormChange(file.id, 'projectName', e.target.value)}
+                      />
+                    </div>
+                    <button
+                      className="btn btn-primary text-sm py-1 px-3 flex items-center gap-1 flex-shrink-0"
+                      onClick={() => handleManualSave(file.id)}
+                      disabled={!form.employeeName.trim()}
+                    >
+                      <Save size={14} />
+                      保存
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       <div className="flex items-center justify-center gap-4 mb-6">
         <button
           className="btn btn-primary"
@@ -110,14 +300,14 @@ export const Step2Recognize: React.FC = () => {
           <p className="text-lg">请先在第一步导入文件</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 max-h-[500px] overflow-y-auto p-1">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 max-h-[600px] overflow-y-auto p-1">
           {files.map((file) => (
             <div
               key={file.id}
-              className="bg-white rounded-xl border border-gray-200 p-4 hover:shadow-md transition-shadow"
+              className="bg-white rounded-xl border border-gray-200 hover:shadow-md transition-shadow"
             >
               {editingFileId === file.id ? (
-                <div className="space-y-3">
+                <div className="p-4 space-y-3">
                   <div className="flex items-center justify-between mb-2">
                     <span className="font-medium text-gray-800 truncate flex-1">
                       {file.name}
@@ -223,54 +413,205 @@ export const Step2Recognize: React.FC = () => {
                   </div>
                 </div>
               ) : (
-                <div className="flex items-start gap-3">
-                  <div className="w-12 h-12 rounded-lg bg-primary-50 flex items-center justify-center flex-shrink-0">
-                    <FileSearch size={20} className="text-primary-500" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-start justify-between">
-                      <span
-                        className="font-medium text-gray-800 truncate flex-1"
-                        title={file.name}
-                      >
-                        {file.name}
-                      </span>
-                      <button
-                        className="ml-2 p-1 text-gray-400 hover:text-primary-500 hover:bg-primary-50 rounded"
-                        onClick={() => handleEdit(file.id)}
-                      >
-                        <Edit2 size={14} />
-                      </button>
+                <div className="p-4">
+                  <div className="flex items-start gap-3">
+                    <div className="w-12 h-12 rounded-lg bg-primary-50 flex items-center justify-center flex-shrink-0">
+                      <FileSearch size={20} className="text-primary-500" />
                     </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-start justify-between">
+                        <span
+                          className="font-medium text-gray-800 truncate flex-1"
+                          title={file.name}
+                        >
+                          {file.name}
+                        </span>
+                        <button
+                          className="ml-2 p-1 text-gray-400 hover:text-primary-500 hover:bg-primary-50 rounded"
+                          onClick={() => handleEdit(file.id)}
+                        >
+                          <Edit2 size={14} />
+                        </button>
+                      </div>
 
-                    {file.invoiceInfo ? (
-                      <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
-                        <div className="flex items-center gap-1 text-gray-600">
-                          <User size={12} />
-                          <span className="truncate">
-                            {file.invoiceInfo.employeeName || '未识别'}
+                      <div className="mt-1 flex items-center gap-1.5 flex-wrap">
+                        <RecognitionSourceBadge source={file.recognitionSource} />
+                        {file.manuallySupplemented && (
+                          <span className="inline-block px-2 py-0.5 text-xs rounded-full bg-amber-50 text-amber-600 border border-amber-200">
+                            已补录
                           </span>
-                        </div>
-                        <div className="flex items-center gap-1 text-gray-600">
-                          <Calendar size={12} />
-                          <span>{file.invoiceInfo.invoiceDate || '未识别'}</span>
-                        </div>
-                        <div className="flex items-center gap-1 text-primary-600 font-medium">
-                          <DollarSign size={12} />
-                          <span>¥{formatAmount(file.invoiceInfo.amount || 0)}</span>
-                        </div>
-                        <div className="flex items-center gap-1 text-gray-600">
-                          <span className="px-2 py-0.5 bg-gray-100 rounded text-xs">
-                            {INVOICE_TYPE_LABELS[file.invoiceInfo.invoiceType]}
-                          </span>
-                        </div>
+                        )}
                       </div>
-                    ) : (
-                      <div className="mt-2 text-sm text-warning-600">
-                        未识别到发票信息，点击编辑手动填写
-                      </div>
-                    )}
+
+                      {file.invoiceInfo ? (
+                        <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
+                          <div className="flex items-center gap-1 text-gray-600">
+                            <User size={12} />
+                            <span className="truncate">
+                              {file.invoiceInfo.employeeName || '未识别'}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1 text-gray-600">
+                            <Calendar size={12} />
+                            <span>{file.invoiceInfo.invoiceDate || '未识别'}</span>
+                          </div>
+                          <div className="flex items-center gap-1 text-primary-600 font-medium">
+                            <DollarSign size={12} />
+                            <span>¥{formatAmount(file.invoiceInfo.amount || 0)}</span>
+                          </div>
+                          <div className="flex items-center gap-1 text-gray-600">
+                            <span className="px-2 py-0.5 bg-gray-100 rounded text-xs">
+                              {INVOICE_TYPE_LABELS[file.invoiceInfo.invoiceType]}
+                            </span>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="mt-2 text-sm text-warning-600">
+                          未识别到发票信息，点击编辑手动填写
+                        </div>
+                      )}
+                    </div>
                   </div>
+
+                  {file.excelSubRows && file.excelSubRows.length > 0 && (
+                    <div className="mt-3 border-t border-gray-100 pt-2">
+                      <button
+                        className="flex items-center gap-1.5 text-sm text-primary-600 hover:text-primary-700 font-medium"
+                        onClick={() => toggleExpanded(file.id)}
+                      >
+                        <Table2 size={14} />
+                        <span>明细行 ({file.excelSubRows.length})</span>
+                        {expandedFiles.has(file.id) ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                      </button>
+
+                      {expandedFiles.has(file.id) && (
+                        <div className="mt-2 overflow-x-auto">
+                          <table className="w-full text-xs border-collapse">
+                            <thead>
+                              <tr className="bg-gray-50">
+                                <th className="px-2 py-1.5 text-left text-gray-500 font-medium border-b">行号</th>
+                                <th className="px-2 py-1.5 text-left text-gray-500 font-medium border-b">姓名</th>
+                                <th className="px-2 py-1.5 text-left text-gray-500 font-medium border-b">金额</th>
+                                <th className="px-2 py-1.5 text-left text-gray-500 font-medium border-b">日期</th>
+                                <th className="px-2 py-1.5 text-left text-gray-500 font-medium border-b">项目</th>
+                                <th className="px-2 py-1.5 text-left text-gray-500 font-medium border-b">状态</th>
+                                <th className="px-2 py-1.5 text-left text-gray-500 font-medium border-b">操作</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {file.excelSubRows.map((row) => (
+                                <tr
+                                  key={row.id}
+                                  className={cn(
+                                    'border-b border-gray-50',
+                                    row.needsManual && 'bg-amber-50'
+                                  )}
+                                >
+                                  <td className="px-2 py-1.5 text-gray-500">{row.rowIndex}</td>
+                                  {editingRowId === row.id ? (
+                                    <>
+                                      <td className="px-1 py-1">
+                                        <input
+                                          type="text"
+                                          className="input text-xs py-0.5 px-1 w-full"
+                                          value={rowForm.employeeName || ''}
+                                          onChange={(e) => setRowForm({ ...rowForm, employeeName: e.target.value })}
+                                        />
+                                      </td>
+                                      <td className="px-1 py-1">
+                                        <input
+                                          type="number"
+                                          className="input text-xs py-0.5 px-1 w-20"
+                                          value={rowForm.amount || ''}
+                                          onChange={(e) => setRowForm({ ...rowForm, amount: e.target.value })}
+                                        />
+                                      </td>
+                                      <td className="px-1 py-1">
+                                        <input
+                                          type="date"
+                                          className="input text-xs py-0.5 px-1 w-full"
+                                          value={rowForm.invoiceDate || ''}
+                                          onChange={(e) => setRowForm({ ...rowForm, invoiceDate: e.target.value })}
+                                        />
+                                      </td>
+                                      <td className="px-1 py-1">
+                                        <input
+                                          type="text"
+                                          className="input text-xs py-0.5 px-1 w-full"
+                                          value={rowForm.projectName || ''}
+                                          onChange={(e) => setRowForm({ ...rowForm, projectName: e.target.value })}
+                                        />
+                                      </td>
+                                      <td className="px-2 py-1.5">
+                                        <span className={cn(
+                                          'inline-block px-1.5 py-0.5 text-xs rounded',
+                                          row.needsManual ? 'bg-amber-100 text-amber-700' : 'bg-green-100 text-green-700'
+                                        )}>
+                                          {row.needsManual ? '待补录' : '已识别'}
+                                        </span>
+                                      </td>
+                                      <td className="px-1 py-1">
+                                        <div className="flex gap-1">
+                                          <button
+                                            className="p-1 rounded bg-success-100 text-success-600 hover:bg-success-200"
+                                            onClick={() => handleRowSave(file.id, row.id)}
+                                          >
+                                            <Check size={12} />
+                                          </button>
+                                          <button
+                                            className="p-1 rounded bg-gray-100 text-gray-600 hover:bg-gray-200"
+                                            onClick={() => { setEditingRowId(null); setRowForm({}); }}
+                                          >
+                                            <X size={12} />
+                                          </button>
+                                        </div>
+                                      </td>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <td className="px-2 py-1.5 text-gray-700">{row.employeeName || '-'}</td>
+                                      <td className="px-2 py-1.5 text-primary-600 font-medium">
+                                        {row.amount > 0 ? `¥${formatAmount(row.amount)}` : '-'}
+                                      </td>
+                                      <td className="px-2 py-1.5 text-gray-600">{row.invoiceDate || '-'}</td>
+                                      <td className="px-2 py-1.5 text-gray-600">{row.projectName || '-'}</td>
+                                      <td className="px-2 py-1.5">
+                                        {row.needsManual ? (
+                                          <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-xs rounded bg-amber-100 text-amber-700">
+                                            <AlertTriangle size={10} />
+                                            待补录
+                                          </span>
+                                        ) : (
+                                          <span className="inline-block px-1.5 py-0.5 text-xs rounded bg-green-100 text-green-700">
+                                            已识别
+                                          </span>
+                                        )}
+                                        {row.manuallySupplemented && (
+                                          <span className="ml-1 inline-block px-1 py-0.5 text-xs rounded bg-amber-50 text-amber-600 border border-amber-200">
+                                            补
+                                          </span>
+                                        )}
+                                      </td>
+                                      <td className="px-2 py-1.5">
+                                        {row.needsManual && (
+                                          <button
+                                            className="p-1 rounded hover:bg-primary-50 text-primary-500"
+                                            onClick={() => handleRowEdit(row)}
+                                          >
+                                            <Edit2 size={12} />
+                                          </button>
+                                        )}
+                                      </td>
+                                    </>
+                                  )}
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
             </div>

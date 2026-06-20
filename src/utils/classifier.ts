@@ -1,4 +1,4 @@
-import type { ReimbursementFile, ClassificationRule, AmountRange } from '@/types';
+import type { ReimbursementFile, ClassificationRule, AmountRange, ExcelRowRecord } from '@/types';
 import { getMonthFromDate, safeFileName } from './common';
 
 export function classifyFiles(
@@ -40,6 +40,26 @@ export function getCategory(
   }
 }
 
+export function getCategoryForRow(
+  row: ExcelRowRecord,
+  rule: ClassificationRule,
+  amountRanges: AmountRange[]
+): string {
+  switch (rule) {
+    case 'employee':
+      return row.employeeName || '未命名员工';
+    case 'month':
+      return row.invoiceDate ? getMonthFromDate(row.invoiceDate) : '未知月份';
+    case 'amount':
+      const range = amountRanges.find(r => row.amount >= r.min && row.amount < r.max);
+      return range ? range.label : '其他金额';
+    case 'project':
+      return row.projectName || '未指定项目';
+    default:
+      return '未分类';
+  }
+}
+
 export function getCategoryMap(
   files: ReimbursementFile[],
   rule: ClassificationRule,
@@ -56,6 +76,41 @@ export function getCategoryMap(
   }
 
   return map;
+}
+
+export function getExpandedEntries(
+  files: ReimbursementFile[],
+  rule: ClassificationRule,
+  amountRanges: AmountRange[]
+): { category: string; label: string; amount: number; source: 'file' | 'row'; file: ReimbursementFile; row?: ExcelRowRecord }[] {
+  const entries: { category: string; label: string; amount: number; source: 'file' | 'row'; file: ReimbursementFile; row?: ExcelRowRecord }[] = [];
+
+  for (const file of files) {
+    if (file.excelSubRows && file.excelSubRows.length > 0) {
+      for (const row of file.excelSubRows) {
+        const category = getCategoryForRow(row, rule, amountRanges);
+        entries.push({
+          category,
+          label: `${file.name} 第${row.rowIndex}行 - ${row.employeeName || '未知'}`,
+          amount: row.amount,
+          source: 'row',
+          file,
+          row,
+        });
+      }
+    } else {
+      const category = getCategory(file, rule, amountRanges);
+      entries.push({
+        category,
+        label: file.newName || file.name,
+        amount: file.invoiceInfo?.amount || 0,
+        source: 'file',
+        file,
+      });
+    }
+  }
+
+  return entries;
 }
 
 export function generateNewFileName(
